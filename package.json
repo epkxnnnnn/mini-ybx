@@ -1,0 +1,21 @@
+{
+  "name": "ybx-chatbot",
+  "version": "1.0.0",
+  "description": "Yellow Box Markets AI Trading Assistant — ENGULF-X Chatbot",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js"
+  },
+  "dependencies": {
+    "@google/genai": "^1.0.0",
+    "discord.js": "^14.16.0",
+    "dotenv": "^16.4.0",
+    "express": "^4.21.0",
+    "@line/bot-sdk": "^9.7.0",
+    "node-telegram-bot-api": "^0.66.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}
