@@ -10,6 +10,11 @@ const YBXAIEngine = require("./ai-engine");
 const CRMClient = require("./services/crm-client");
 const CommandRouter = require("./services/command-router");
 const AuthService = require("./services/auth-service");
+const GuardianService = require("./services/guardian-service");
+const TradePlanService = require("./services/trade-plan-service");
+const { generateSignal, generateSignalForSymbol, AI_SIGNAL_SYMBOLS } = require("./services/signal-service");
+const { calculatePortfolio } = require("./services/portfolio-service");
+const { startMarginMonitor } = require("./jobs/margin-monitor");
 const setupTelegram = require("./bots/telegram");
 const setupDiscord = require("./bots/discord");
 const setupLINE = require("./bots/line");
@@ -48,6 +53,10 @@ const authService = crmClient ? new AuthService(crmClient) : null;
 const commandRouter = crmClient
   ? new CommandRouter(crmClient, aiEngine, authService)
   : null;
+
+// Initialize Guardian + Trade Plan services
+const guardianService = new GuardianService();
+const tradePlanService = new TradePlanService();
 
 // ========== REST API (for web chat widget) ==========
 
@@ -470,59 +479,7 @@ app.get("/api/webapp/copy-trading", async (req, res) => {
   }
 });
 
-// ========== AI Signals ==========
-
-const AI_SIGNAL_SYMBOLS = ['XAUUSD', 'XAGUSD', 'EURUSD', 'GBPUSD', 'USDJPY', 'BTCUSD'];
-
-function generateSignal(symbol, structure, htfBias, keyLevels, sweeps) {
-  const struct = structure?.data || structure;
-  const biases = htfBias?.data || htfBias;
-  const levels = keyLevels?.data || keyLevels;
-
-  if (!struct) return null;
-
-  const direction = (struct.trend || struct.direction || '').toLowerCase().includes('bull') ? 'BUY' : 'SELL';
-  const dirKey = direction === 'BUY' ? 'bull' : 'bear';
-
-  // Confidence from HTF bias alignment
-  const tfArr = Array.isArray(biases) ? biases : (biases?.biases || biases?.timeframes || []);
-  const aligned = tfArr.filter(b => (b.bias || b.direction || '').toLowerCase().includes(dirKey)).length;
-  const confidence = tfArr.length ? Math.round((aligned / tfArr.length) * 100) : 50;
-
-  // Key levels for entry/SL/TP
-  const levelArr = Array.isArray(levels) ? levels : (levels?.levels || []);
-  const currentPrice = parseFloat(struct.price || struct.currentPrice || 0);
-
-  const supports = levelArr.filter(l => parseFloat(l.price) < currentPrice).sort((a, b) => parseFloat(b.price) - parseFloat(a.price));
-  const resistances = levelArr.filter(l => parseFloat(l.price) > currentPrice).sort((a, b) => parseFloat(a.price) - parseFloat(b.price));
-
-  let entry, sl, tp;
-  if (direction === 'BUY') {
-    entry = currentPrice;
-    sl = supports[0] ? parseFloat(supports[0].price) : currentPrice * 0.99;
-    tp = resistances[0] ? parseFloat(resistances[0].price) : currentPrice * 1.02;
-  } else {
-    entry = currentPrice;
-    sl = resistances[0] ? parseFloat(resistances[0].price) : currentPrice * 1.01;
-    tp = supports[0] ? parseFloat(supports[0].price) : currentPrice * 0.98;
-  }
-
-  const risk = Math.abs(entry - sl);
-  const reward = Math.abs(tp - entry);
-  const rr = risk > 0 ? (reward / risk).toFixed(1) : '0.0';
-
-  return {
-    symbol,
-    direction,
-    confidence,
-    entry: parseFloat(entry.toFixed(symbol.includes('JPY') ? 3 : 2)),
-    sl: parseFloat(sl.toFixed(symbol.includes('JPY') ? 3 : 2)),
-    tp: parseFloat(tp.toFixed(symbol.includes('JPY') ? 3 : 2)),
-    riskReward: `1:${rr}`,
-    analysis: struct.summary || struct.description || `${struct.trend || struct.direction || 'N/A'} structure detected`,
-    timeframe: struct.timeframe || 'H4',
-  };
-}
+// ========== AI Signals (uses shared signal-service) ==========
 
 app.get("/api/webapp/ai-signals", async (req, res) => {
   const session = await getMemberSession(req);
@@ -531,15 +488,7 @@ app.get("/api/webapp/ai-signals", async (req, res) => {
 
   try {
     const results = await Promise.all(
-      AI_SIGNAL_SYMBOLS.map(async (symbol) => {
-        const [structure, htfBias, keyLevels, sweeps] = await Promise.all([
-          crmClient.getMarketStructure(symbol).catch(() => null),
-          crmClient.getHtfBias(symbol).catch(() => null),
-          crmClient.getKeyLevels(symbol).catch(() => null),
-          crmClient.getLiquiditySweeps(symbol).catch(() => null),
-        ]);
-        return generateSignal(symbol, structure, htfBias, keyLevels, sweeps);
-      })
+      AI_SIGNAL_SYMBOLS.map((symbol) => generateSignalForSymbol(crmClient, symbol))
     );
     res.json({ signals: results.filter(Boolean) });
   } catch (err) {
@@ -556,80 +505,8 @@ app.get("/api/webapp/portfolio", async (req, res) => {
   if (!crmClient) return res.status(503).json({ error: "CRM not configured" });
 
   try {
-    const [accountsRes, positionsRes] = await Promise.all([
-      crmClient.getMemberAccounts(session.accessToken).catch(() => ({ data: [] })),
-      crmClient.getMemberPositions(session.accessToken).catch(() => ({ data: [] })),
-    ]);
-
-    const accounts = accountsRes?.data ? (Array.isArray(accountsRes.data) ? accountsRes.data : (accountsRes.data.accounts || [])) : [];
-    const positions = positionsRes?.data ? (Array.isArray(positionsRes.data) ? positionsRes.data : (positionsRes.data.positions || [])) : [];
-
-    // Calculate totals
-    const totalBalance = accounts.reduce((s, a) => s + (parseFloat(a.balance) || 0), 0);
-    const totalEquity = accounts.reduce((s, a) => s + (parseFloat(a.equity) || parseFloat(a.balance) || 0), 0);
-    const totalMargin = accounts.reduce((s, a) => s + (parseFloat(a.margin) || 0), 0);
-    const freeMargin = totalEquity - totalMargin;
-    const marginLevel = totalMargin > 0 ? (totalEquity / totalMargin) * 100 : 9999;
-
-    // Health score (0-100)
-    let healthScore = 100;
-    if (marginLevel < 150) healthScore -= 40;
-    else if (marginLevel < 300) healthScore -= 20;
-    else if (marginLevel < 500) healthScore -= 10;
-
-    const drawdown = totalBalance > 0 ? ((totalBalance - totalEquity) / totalBalance) * 100 : 0;
-    if (drawdown > 20) healthScore -= 30;
-    else if (drawdown > 10) healthScore -= 15;
-    else if (drawdown > 5) healthScore -= 5;
-
-    // Diversification: unique symbols in positions
-    const symbols = [...new Set(positions.map(p => p.symbol || ''))];
-    if (symbols.length <= 1 && positions.length > 0) healthScore -= 15;
-    else if (symbols.length <= 2 && positions.length > 2) healthScore -= 10;
-
-    healthScore = Math.max(0, Math.min(100, healthScore));
-
-    // Risk breakdown by symbol
-    const riskBySymbol = {};
-    positions.forEach(p => {
-      const sym = p.symbol || 'Unknown';
-      if (!riskBySymbol[sym]) riskBySymbol[sym] = { volume: 0, pnl: 0, count: 0 };
-      riskBySymbol[sym].volume += parseFloat(p.volume || p.lots || 0);
-      riskBySymbol[sym].pnl += parseFloat(p.profit || p.pnl || 0);
-      riskBySymbol[sym].count++;
-    });
-
-    // AI Recommendations
-    const recommendations = [];
-    if (marginLevel < 200 && totalMargin > 0) recommendations.push("ระดับ Margin ต่ำ — ควรลดขนาดสถานะหรือเติมเงิน");
-    if (drawdown > 10) recommendations.push("Drawdown สูง " + drawdown.toFixed(1) + "% — ควรตรวจสอบ Stop Loss");
-    Object.entries(riskBySymbol).forEach(([sym, data]) => {
-      if (data.volume > 1 && data.pnl < -50) recommendations.push(`ลด exposure ${sym} — ขาดทุน $${Math.abs(data.pnl).toFixed(0)}`);
-    });
-    positions.forEach(p => {
-      if (!p.sl && !p.stopLoss) recommendations.push(`ตั้ง Stop Loss สำหรับ ${p.symbol || 'position'}`);
-    });
-    if (!recommendations.length) recommendations.push("พอร์ตอยู่ในเกณฑ์ดี — ไม่มีคำแนะนำเร่งด่วน");
-
-    res.json({
-      totalBalance,
-      totalEquity,
-      freeMargin,
-      marginLevel: marginLevel > 9000 ? null : Math.round(marginLevel),
-      healthScore,
-      drawdown: parseFloat(drawdown.toFixed(2)),
-      positions: positions.map(p => ({
-        symbol: p.symbol,
-        direction: (p.type || p.direction || '').toUpperCase().includes('BUY') ? 'BUY' : 'SELL',
-        volume: parseFloat(p.volume || p.lots || 0),
-        pnl: parseFloat(p.profit || p.pnl || 0),
-        sl: p.sl || p.stopLoss || null,
-        tp: p.tp || p.takeProfit || null,
-        openPrice: parseFloat(p.openPrice || p.entryPrice || 0),
-      })),
-      riskBySymbol,
-      recommendations,
-    });
+    const portfolio = await calculatePortfolio(crmClient, session.accessToken);
+    res.json(portfolio);
   } catch (err) {
     console.error("Portfolio error:", err.message);
     res.status(500).json({ error: "Failed to fetch portfolio" });
@@ -662,6 +539,20 @@ app.post("/api/webapp/journal", async (req, res) => {
     res.json(data);
   } catch (err) {
     console.error("Journal create error:", err.message);
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// Delete journal entry
+app.delete("/api/webapp/journal/:id", async (req, res) => {
+  const session = await getMemberSession(req);
+  if (!session) return res.status(401).json({ error: "Please login first" });
+  if (!crmClient) return res.status(503).json({ error: "CRM not configured" });
+  try {
+    const data = await crmClient.deleteJournalEntry(session.accessToken, req.params.id);
+    res.json(data);
+  } catch (err) {
+    console.error("Journal delete error:", err.message);
     res.status(err.status || 500).json({ error: err.message });
   }
 });
@@ -733,18 +624,55 @@ app.post("/api/webapp/chat", async (req, res) => {
   }
 });
 
+// ========== Guardian Status API ==========
+
+app.get("/api/guardian-status/:userId", (req, res) => {
+  const userId = req.params.userId;
+  // Check across platforms
+  const platforms = ["telegram", "line", "web"];
+  for (const platform of platforms) {
+    const status = guardianService.getStatus(platform, userId);
+    if (status.active) {
+      return res.json({ platform, userId, ...status });
+    }
+  }
+  res.json({ userId, active: false, activatedAt: null });
+});
+
+// ========== Trade Plans API ==========
+
+app.get("/api/trade-plans/:userId", (req, res) => {
+  const userId = req.params.userId;
+  const platform = req.query.platform || "web";
+  const plans = tradePlanService.getPlans(platform, userId);
+  res.json({ plans });
+});
+
 // ========== Start Bots ==========
 
-console.log("\n🟡 Yellow Box Markets — YBX Chatbot v2.0.0\n");
+console.log("\n\uD83D\uDFE1 Yellow Box Markets — YBX Chatbot v2.0.0\n");
 
 // Start platform bots (each one checks for its own token)
-setupTelegram(aiEngine, commandRouter, authService);
+const telegramBot = setupTelegram(aiEngine, commandRouter, authService);
 setupDiscord(aiEngine, commandRouter, authService);
-setupLINE(app, aiEngine, commandRouter, authService);
+const lineClient = setupLINE(app, aiEngine, commandRouter, authService);
+
+// Wire additional dependencies into bots
+setupTelegram.setDependencies({ guardianService, tradePlanService });
+setupLINE.setDependencies({ guardianService, tradePlanService, crmClient });
+
+// Start margin monitor (requires auth + CRM + bot instances)
+startMarginMonitor({
+  authService,
+  crmClient,
+  guardianService,
+  telegramBot,
+  lineClient,
+});
 
 // Start HTTP server
 app.listen(PORT, () => {
-  console.log(`\n🌐 Web chat: http://localhost:${PORT}`);
-  console.log(`📡 API endpoint: http://localhost:${PORT}/api/chat`);
-  console.log(`💚 Health check: http://localhost:${PORT}/api/health\n`);
+  console.log(`\n\uD83C\uDF10 Web chat: http://localhost:${PORT}`);
+  console.log(`\uD83D\uDCE1 API endpoint: http://localhost:${PORT}/api/chat`);
+  console.log(`\uD83D\uDC9A Health check: http://localhost:${PORT}/api/health\n`);
 });
