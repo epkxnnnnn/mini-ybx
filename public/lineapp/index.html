@@ -1358,9 +1358,14 @@
         card.innerHTML = "<div class='card-title'>Latest Signals</div>";
         var grid = document.createElement("div");
         grid.className = "signal-grid";
-        signals.forEach(function(sig) { grid.appendChild(makeSignal(sig, true)); });
+        signals.forEach(function(sig) { grid.appendChild(makeSignal(sig, true, "signals_list")); });
         card.appendChild(grid);
         el.appendChild(card);
+        var cta = document.createElement("div");
+        cta.className = "cta-banner";
+        cta.innerHTML = "<div><strong>Execution starts in Telegram</strong><p>ใช้ LINE เพื่อ shortlist setups แล้วไปต่อใน Telegram เมื่อถึงขั้น execution และ position management</p></div>";
+        cta.appendChild(makeToolButton("Continue In Telegram", function() { openTelegram("signals_cta"); }, true));
+        el.appendChild(cta);
       }).catch(function(err) {
         renderError(el, err.message || "Failed to load signals");
       });
@@ -1397,7 +1402,7 @@
         toolbar.className = "toolbar";
         toolbar.appendChild(makeToolButton("✦ Ask Jerry", openChat, true));
         toolbar.appendChild(makeToolButton("✉ Open Support", function() { switchScreen("support"); }, false));
-        toolbar.appendChild(makeToolButton("↗ Telegram", openTelegram, false));
+        toolbar.appendChild(makeToolButton("↗ Telegram", function() { openTelegram("activity_toolbar"); }, false));
         if (liffReady && window.liff && window.liff.closeWindow) {
           toolbar.appendChild(makeToolButton("× Close", closeLiffWindow, false));
         }
@@ -1416,6 +1421,11 @@
         }
         feedCard.appendChild(stack);
         el.appendChild(feedCard);
+        var handoff = document.createElement("div");
+        handoff.className = "cta-banner";
+        handoff.innerHTML = "<div><strong>Need to act on this?</strong><p>When an activity item turns into a trading decision, continue in Telegram where Jerry can guide the execution workflow.</p></div>";
+        handoff.appendChild(makeToolButton("Go To Telegram", function() { openTelegram("activity_cta"); }, true));
+        el.appendChild(handoff);
       }).catch(function(err) {
         renderError(el, err.message || "Failed to load activity");
       });
@@ -1480,6 +1490,11 @@
         fundingStack.appendChild(makeSupportItem("Pending", String((summary.pendingDepositsCount || 0) + (summary.pendingWithdrawalsCount || 0)) + " requests pending"));
         fundingCard.appendChild(fundingStack);
         el.appendChild(fundingCard);
+        var accountCta = document.createElement("div");
+        accountCta.className = "cta-banner";
+        accountCta.innerHTML = "<div><strong>Want to place or manage trades?</strong><p>LINE is the snapshot view. Telegram is the trading desk for actual order and position workflows.</p></div>";
+        accountCta.appendChild(makeToolButton("Open Telegram Desk", function() { openTelegram("account_cta"); }, true));
+        el.appendChild(accountCta);
       }).catch(function(err) {
         renderError(el, err.message || "Failed to load account");
       });
@@ -1552,6 +1567,11 @@
           "<textarea id='supportDescription' placeholder='อธิบายปัญหาหรือสิ่งที่ต้องการให้ทีมช่วย'></textarea>" +
           "<button class='btn btn-primary' onclick='submitSupport()'>ส่ง Ticket</button>";
         el.appendChild(formCard);
+        var supportCta = document.createElement("div");
+        supportCta.className = "cta-banner";
+        supportCta.innerHTML = "<div><strong>Need trading help, not just support?</strong><p>Open Telegram when the conversation moves from inquiry into execution or risk management.</p></div>";
+        supportCta.appendChild(makeToolButton("Open Telegram", function() { openTelegram("support_cta"); }, true));
+        el.appendChild(supportCta);
       }).catch(function(err) {
         renderError(el, err.message || "Failed to load support");
       });
@@ -1592,7 +1612,7 @@
       return row;
     }
 
-    function makeSignal(sig, showMore) {
+    function makeSignal(sig, showMore, source) {
       var item = document.createElement("div");
       item.className = "signal-item";
       var badge = ((sig.direction || "").toLowerCase() === "buy") ? "buy" : "sell";
@@ -1604,6 +1624,11 @@
         "Entry " + (sig.entry || "-") + " • SL " + (sig.sl || "-") + " • TP " + (sig.tp || "-") +
         (showMore ? (" • R:R " + (sig.riskReward || "-")) : "") +
         "</p>";
+      var cta = document.createElement("a");
+      cta.className = "link-cta";
+      cta.textContent = "Execute on Telegram →";
+      cta.onclick = function() { openTelegram(source || "signal_card"); };
+      item.appendChild(cta);
       return item;
     }
 
@@ -1635,7 +1660,7 @@
       return wrapper;
     }
 
-    function openTelegram() {
+    function openTelegram(source) {
       var url = appConfig.telegramUrl;
       if (!url && appConfig.telegramUsername) {
         url = "https://t.me/" + appConfig.telegramUsername;
@@ -1644,6 +1669,7 @@
         alert("Telegram handoff is not configured.");
         return;
       }
+      trackEvent("telegram_handoff_click", currentScreen, { source: source || "manual", inLiff: liffReady });
       if (liffReady && window.liff && window.liff.openWindow) {
         window.liff.openWindow({ url: url, external: true });
         return;
@@ -1659,6 +1685,7 @@
 
     function openChat() {
       document.getElementById("chatOverlay").classList.add("open");
+      trackEvent("chat_opened", currentScreen, { inLiff: liffReady });
       if (!document.getElementById("chatLog").children.length) {
         addBubble("assistant", "สวัสดีครับ ผมคือ Jerry เวอร์ชัน LINE\n\nผมช่วยสรุปตลาด, อ่านสถานะพอร์ต, และเตรียมคุณไปสู่ Telegram เมื่อถึงขั้น execution ได้");
       }
