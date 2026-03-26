@@ -9,6 +9,7 @@ const { calculatePortfolio } = require("../services/portfolio-service");
 let guardianService = null;
 let tradePlanService = null;
 let crmClient = null;
+let webhookServiceRef = null;
 
 function getTelegramHandoffUrl() {
   if (process.env.TELEGRAM_BOT_URL) return process.env.TELEGRAM_BOT_URL;
@@ -98,6 +99,7 @@ setupLINE.setDependencies = function (deps) {
   if (deps.guardianService) guardianService = deps.guardianService;
   if (deps.tradePlanService) tradePlanService = deps.tradePlanService;
   if (deps.crmClient) crmClient = deps.crmClient;
+  if (deps.webhookService) webhookServiceRef = deps.webhookService;
 };
 setupLINE.getTelegramHandoffUrl = getTelegramHandoffUrl;
 setupLINE.buildTelegramHandoffText = buildTelegramHandoffText;
@@ -231,6 +233,55 @@ async function handleEvent(event, client, aiEngine, commandRouter, authService) 
         "พิมพ์ \"เข้าสู่ระบบ\" เพื่อเข้าสู่ระบบด้วยอีเมลและรหัสผ่าน YBX ของคุณ"
       );
     }
+  }
+
+  // ========== /webhook command — TradingView webhook management ==========
+  if (text === "/webhook" || text === "/webhook reset" || text === "/webhook off") {
+    if (!webhookServiceRef) {
+      return replyLine(client, replyToken, "\u274C Webhook service not available");
+    }
+
+    const baseUrl = process.env.WEBHOOK_BASE_URL || '';
+
+    if (text === "/webhook off") {
+      const revoked = webhookServiceRef.revokeToken("line", userId);
+      if (revoked) {
+        return replyLine(client, replyToken, "\u274C Webhook revoked\nURL \u0E40\u0E14\u0E34\u0E21\u0E44\u0E21\u0E48\u0E2A\u0E32\u0E21\u0E32\u0E23\u0E16\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19\u0E44\u0E14\u0E49\u0E2D\u0E35\u0E01\n\u0E1E\u0E34\u0E21\u0E1E\u0E4C /webhook \u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E2A\u0E23\u0E49\u0E32\u0E07 URL \u0E43\u0E2B\u0E21\u0E48");
+      }
+      return replyLine(client, replyToken, "\u274C \u0E44\u0E21\u0E48\u0E1E\u0E1A Webhook \u0E17\u0E35\u0E48\u0E40\u0E1B\u0E34\u0E14\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19\u0E2D\u0E22\u0E39\u0E48");
+    }
+
+    if (text === "/webhook reset") {
+      const token = webhookServiceRef.regenerateToken("line", userId);
+      const url = baseUrl ? `${baseUrl}/webhook/signal/${token}` : `/webhook/signal/${token}`;
+      return replyLine(client, replyToken,
+        `\uD83D\uDD04 Webhook URL \u0E43\u0E2B\u0E21\u0E48:\n${url}\n\n\u26A0\uFE0F URL \u0E40\u0E14\u0E34\u0E21\u0E16\u0E39\u0E01\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01\u0E41\u0E25\u0E49\u0E27 \u0E01\u0E23\u0E38\u0E13\u0E32\u0E2D\u0E31\u0E1E\u0E40\u0E14\u0E17\u0E43\u0E19 TradingView`
+      );
+    }
+
+    // /webhook — show or generate
+    const existing = webhookServiceRef.getTokenInfo("line", userId);
+    if (existing) {
+      const url = baseUrl ? `${baseUrl}/webhook/signal/${existing.token}` : `/webhook/signal/${existing.token}`;
+      return replyLine(client, replyToken,
+        `\uD83D\uDCE1 TradingView Webhook\n\nURL:\n${url}\n\nSignals: ${existing.signalCount}\n\n` +
+        `/webhook reset \u2014 \u0E2A\u0E23\u0E49\u0E32\u0E07 URL \u0E43\u0E2B\u0E21\u0E48\n` +
+        `/webhook off \u2014 \u0E1B\u0E34\u0E14 Webhook`
+      );
+    }
+
+    const token = webhookServiceRef.generateToken("line", userId);
+    const url = baseUrl ? `${baseUrl}/webhook/signal/${token}` : `/webhook/signal/${token}`;
+    return replyLine(client, replyToken,
+      `\uD83D\uDCE1 TradingView Webhook \u0E1E\u0E23\u0E49\u0E2D\u0E21\u0E43\u0E0A\u0E49\u0E07\u0E32\u0E19!\n\nURL:\n${url}\n\n` +
+      `\u0E27\u0E34\u0E18\u0E35\u0E15\u0E31\u0E49\u0E07\u0E04\u0E48\u0E32:\n` +
+      `1. \u0E40\u0E1B\u0E34\u0E14 Alert \u0E43\u0E19 TradingView\n` +
+      `2. \u0E40\u0E25\u0E37\u0E2D\u0E01 Webhook URL\n` +
+      `3. \u0E27\u0E32\u0E07 URL \u0E14\u0E49\u0E32\u0E19\u0E1A\u0E19\n` +
+      `4. \u0E15\u0E31\u0E49\u0E07 Message: {"ticker":"XAUUSD","action":"buy","price":{{close}}}\n\n` +
+      `/webhook reset \u2014 \u0E2A\u0E23\u0E49\u0E32\u0E07 URL \u0E43\u0E2B\u0E21\u0E48\n` +
+      `/webhook off \u2014 \u0E1B\u0E34\u0E14 Webhook`
+    );
   }
 
   // ========== Portfolio Commands ==========

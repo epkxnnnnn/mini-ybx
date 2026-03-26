@@ -14,6 +14,7 @@ const GuardianService = require("./services/guardian-service");
 const TradePlanService = require("./services/trade-plan-service");
 const StateRepository = require("./services/state-repository");
 const ExecutionAuditService = require("./services/execution-audit-service");
+const WebhookService = require("./services/webhook-service");
 const { calculatePortfolio } = require("./services/portfolio-service");
 const { createRequestId, log } = require("./services/logger");
 const { generateSignal, generateSignalForSymbol, AI_SIGNAL_SYMBOLS } = require("./services/signal-service");
@@ -153,8 +154,14 @@ let guardianService = null;
 let tradePlanService = null;
 let stateRepository = null;
 let executionAuditService = null;
+let webhookService = null;
 let marginMonitorHandle = null;
 let positionMonitorHandle = null;
+let telegramBotRef = null;
+let lineClientRef = null;
+
+// Per-token rate limiter for webhook signals (10/min/token)
+const webhookRateBuckets = new Map();
 
 function toMap(entries) {
   return new Map(entries.map((entry) => [entry.key, entry.value]));
@@ -174,6 +181,8 @@ async function loadPersistedMaps(repo) {
       conversations: new Map(),
       summaries: new Map(),
       lastTradeSetups: new Map(),
+      webhookTokens: new Map(),
+      webhookUserTokens: new Map(),
     };
   }
 
@@ -189,6 +198,8 @@ async function loadPersistedMaps(repo) {
     conversations,
     summaries,
     lastTradeSetups,
+    webhookTokens,
+    webhookUserTokens,
   ] = await Promise.all([
     repo.list('auth:sessions'),
     repo.list('auth:login-states'),
@@ -201,6 +212,8 @@ async function loadPersistedMaps(repo) {
     repo.list('ai:conversations'),
     repo.list('ai:summaries'),
     repo.list('ai:last-trade-setups'),
+    repo.list('webhook:tokens'),
+    repo.list('webhook:user-tokens'),
   ]);
 
   return {
@@ -215,6 +228,8 @@ async function loadPersistedMaps(repo) {
     conversations: toMap(conversations),
     summaries: toMap(summaries),
     lastTradeSetups: toMap(lastTradeSetups),
+    webhookTokens: toMap(webhookTokens),
+    webhookUserTokens: toMap(webhookUserTokens),
   };
 }
 
@@ -399,22 +414,120 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok" });
 });
 
-// TradingView webhook receiver (from your existing setup)
-app.post("/webhook/tradingview", (req, res) => {
-  // C2: Validate shared secret if configured
-  const webhookSecret = process.env.TRADINGVIEW_WEBHOOK_SECRET;
-  if (webhookSecret) {
-    const provided = req.headers["x-tradingview-secret"] || (req.body && req.body.secret);
-    if (provided !== webhookSecret) {
-      return res.status(401).json({ error: "Invalid webhook secret" });
-    }
+// ========== Per-User TradingView Webhook ==========
+
+app.post("/webhook/signal/:token", (req, res) => {
+  if (!webhookService) {
+    return res.status(503).json({ error: "Webhook service not available" });
   }
 
-  const signal = req.body;
-  console.log("TradingView Signal:", JSON.stringify(signal));
-  // TODO: broadcast to subscribed users
-  res.json({ success: true });
+  const { token } = req.params;
+  const tokenData = webhookService.validateToken(token);
+  if (!tokenData) {
+    return res.status(401).json({ error: "Invalid or revoked webhook token" });
+  }
+
+  // Rate limit: 10 requests per minute per token
+  const now = Date.now();
+  let bucket = webhookRateBuckets.get(token);
+  if (!bucket || now - bucket.windowStart > 60000) {
+    bucket = { windowStart: now, count: 0 };
+    webhookRateBuckets.set(token, bucket);
+  }
+  bucket.count++;
+  if (bucket.count > 10) {
+    return res.status(429).json({ error: "Rate limit exceeded (10 signals/min)" });
+  }
+
+  // Parse payload
+  let signal;
+  try {
+    signal = WebhookService.parseTradingViewPayload(req.body);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
+  // Audit log
+  const { platform, userId } = tokenData;
+  if (executionAuditService) {
+    executionAuditService.record({
+      platform,
+      userId,
+      category: "webhook",
+      action: "tradingview_signal",
+      status: "success",
+      correlationId: null,
+      payload: { symbol: signal.symbol, direction: signal.direction, entry: signal.entry },
+    }).catch(() => {});
+  }
+
+  // Create pending trade plan
+  if (tradePlanService) {
+    const plan = tradePlanService.createPending(platform, userId, signal);
+    webhookService.incrementSignalCount(token);
+
+    // Push notification to user
+    pushWebhookSignalToUser(platform, userId, plan, signal);
+
+    return res.json({ success: true, planId: plan.id, symbol: signal.symbol, direction: signal.direction });
+  }
+
+  res.json({ success: true, symbol: signal.symbol, direction: signal.direction });
 });
+
+/**
+ * Push a TradingView webhook signal to the user's chat platform.
+ */
+function pushWebhookSignalToUser(platform, userId, plan, signal) {
+  const header = `\uD83D\uDCE1 TradingView Signal \u2014 ${signal.symbol} ${signal.direction}`;
+  const lines = [
+    header,
+    '',
+    `Entry: $${signal.entry}`,
+  ];
+  if (signal.sl != null) lines.push(`SL: $${signal.sl}`);
+  if (signal.tp != null) lines.push(`TP: $${signal.tp}`);
+  if (signal.riskReward !== 'N/A') lines.push(`R:R: ${signal.riskReward}`);
+  if (signal.timeframe) lines.push(`Timeframe: ${signal.timeframe}`);
+  const text = lines.join('\n');
+
+  if (platform === 'telegram' && telegramBotRef) {
+    const planButtons = [
+      { text: "\u2705 \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E41\u0E1C\u0E19", callback_data: `save_plan:${plan.id}` },
+      { text: "\uD83D\uDCE4 \u0E2A\u0E48\u0E07\u0E04\u0E33\u0E2A\u0E31\u0E48\u0E07", callback_data: `execute_plan:${plan.id}` },
+      { text: "\u274C \u0E22\u0E01\u0E40\u0E25\u0E34\u0E01", callback_data: `cancel_plan:${plan.id}` },
+    ];
+    telegramBotRef.sendMessage(userId, text, {
+      reply_markup: { inline_keyboard: [planButtons] },
+    }).catch((err) => {
+      console.error(`Webhook push to Telegram ${userId} failed:`, err.message);
+    });
+  }
+
+  if (platform === 'line' && lineClientRef) {
+    lineClientRef.pushMessage({
+      to: String(userId),
+      messages: [{
+        type: 'text',
+        text,
+        quickReply: {
+          items: [
+            {
+              type: 'action',
+              action: { type: 'message', label: '\u2705 \u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E41\u0E1C\u0E19', text: `\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E41\u0E1C\u0E19:${plan.id}` },
+            },
+            {
+              type: 'action',
+              action: { type: 'message', label: '\u274C \u0E22\u0E01\u0E40\u0E25\u0E34\u0E01', text: `\u0E22\u0E01\u0E40\u0E25\u0E34\u0E01\u0E41\u0E1C\u0E19:${plan.id}` },
+            },
+          ],
+        },
+      }],
+    }).catch((err) => {
+      console.error(`Webhook push to LINE ${userId} failed:`, err.message);
+    });
+  }
+}
 
 // ========== Telegram Mini App (WebApp) API ==========
 
@@ -660,6 +773,97 @@ app.post("/api/webapp/logout", async (req, res) => {
     aiEngine.resetConversation("telegram", userId);
   }
   res.json({ success: true });
+});
+
+// ========== Webhook Management API (WebApp) ==========
+
+app.get("/api/webapp/webhook", async (req, res) => {
+  if (!webhookService || !req.telegramUser) {
+    return res.json({ enabled: false });
+  }
+  const userId = req.telegramUser.id;
+  const info = webhookService.getTokenInfo("telegram", userId);
+  const baseUrl = process.env.WEBHOOK_BASE_URL || `${req.protocol}://${req.get('host')}`;
+  if (info) {
+    return res.json({
+      enabled: true,
+      webhookUrl: `${baseUrl}/webhook/signal/${info.token}`,
+      createdAt: info.createdAt,
+      signalCount: info.signalCount,
+    });
+  }
+  res.json({ enabled: false });
+});
+
+app.post("/api/webapp/webhook", async (req, res) => {
+  if (!webhookService || !req.telegramUser) {
+    return res.status(503).json({ error: "Webhook service not available" });
+  }
+  const userId = req.telegramUser.id;
+  const { action } = req.body || {};
+  const baseUrl = process.env.WEBHOOK_BASE_URL || `${req.protocol}://${req.get('host')}`;
+
+  if (action === 'revoke') {
+    webhookService.revokeToken("telegram", userId);
+    return res.json({ success: true, enabled: false });
+  }
+
+  // generate or regenerate
+  const token = action === 'regenerate'
+    ? webhookService.regenerateToken("telegram", userId)
+    : webhookService.generateToken("telegram", userId);
+
+  res.json({
+    success: true,
+    enabled: true,
+    webhookUrl: `${baseUrl}/webhook/signal/${token}`,
+  });
+});
+
+// ========== Webhook Management API (LINE App) ==========
+
+app.get("/api/lineapp/webhook", async (req, res) => {
+  if (!webhookService) return res.json({ enabled: false });
+  const resolved = await getBearerMemberSession(req);
+  if (!resolved) return res.status(401).json({ error: "Please login first" });
+
+  const { platform, userId } = resolved.identity;
+  const info = webhookService.getTokenInfo(platform, userId);
+  const baseUrl = process.env.WEBHOOK_BASE_URL || `${req.protocol}://${req.get('host')}`;
+  if (info) {
+    return res.json({
+      enabled: true,
+      webhookUrl: `${baseUrl}/webhook/signal/${info.token}`,
+      createdAt: info.createdAt,
+      signalCount: info.signalCount,
+    });
+  }
+  res.json({ enabled: false });
+});
+
+app.post("/api/lineapp/webhook", async (req, res) => {
+  if (!webhookService) return res.status(503).json({ error: "Webhook service not available" });
+  const resolved = await getBearerMemberSession(req);
+  if (!resolved) return res.status(401).json({ error: "Please login first" });
+
+  const { platform, userId } = resolved.identity;
+  const { action } = req.body || {};
+  const baseUrl = process.env.WEBHOOK_BASE_URL || `${req.protocol}://${req.get('host')}`;
+
+  if (action === 'revoke') {
+    webhookService.revokeToken(platform, userId);
+    return res.json({ success: true, enabled: false });
+  }
+
+  const token = action === 'regenerate'
+    ? webhookService.regenerateToken(platform, userId)
+    : webhookService.generateToken(platform, userId);
+
+  res.json({
+    success: true,
+    enabled: true,
+    webhookUrl: `${baseUrl}/webhook/signal/${token}`,
+  });
 });
 
 // ========== Member Account & Financial Endpoints ==========
@@ -1573,6 +1777,11 @@ async function bootstrap() {
   executionAuditService = new ExecutionAuditService({
     repo: stateRepository.enabled ? stateRepository : null,
   });
+  webhookService = new WebhookService({
+    repo: stateRepository.enabled ? stateRepository : null,
+    tokens: persisted.webhookTokens,
+    userTokens: persisted.webhookUserTokens,
+  });
 
   if (authService && !process.env.SESSION_TOKEN_SECRET) {
     console.warn("⚠️ SESSION_TOKEN_SECRET is not set. Web sessions will be invalid after restart and will not work across replicas.");
@@ -1589,9 +1798,13 @@ async function bootstrap() {
   setupDiscord(aiEngine, commandRouter, authService);
   const lineClient = setupLINE(app, aiEngine, commandRouter, authService);
 
+  // Store refs for webhook push notifications
+  telegramBotRef = telegramBot;
+  lineClientRef = lineClient;
+
   commandRouter?.setGuardianService(guardianService);
-  setupTelegram.setDependencies({ guardianService, tradePlanService, crmClient, authService, executionAuditService });
-  setupLINE.setDependencies({ guardianService, tradePlanService, crmClient });
+  setupTelegram.setDependencies({ guardianService, tradePlanService, crmClient, authService, executionAuditService, webhookService });
+  setupLINE.setDependencies({ guardianService, tradePlanService, crmClient, webhookService });
 
   marginMonitorHandle = startMarginMonitor({
     authService,
