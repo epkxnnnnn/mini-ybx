@@ -14,6 +14,7 @@ const GuardianService = require("./services/guardian-service");
 const TradePlanService = require("./services/trade-plan-service");
 const StateRepository = require("./services/state-repository");
 const ExecutionAuditService = require("./services/execution-audit-service");
+const { calculatePortfolio } = require("./services/portfolio-service");
 const { createRequestId, log } = require("./services/logger");
 const { generateSignal, generateSignalForSymbol, AI_SIGNAL_SYMBOLS } = require("./services/signal-service");
 const { normalizeTick } = require("./services/market-data-service");
@@ -23,11 +24,88 @@ const setupTelegram = require("./bots/telegram");
 const setupDiscord = require("./bots/discord");
 const setupLINE = require("./bots/line");
 
+// L2: Read version from package.json instead of hardcoding
+const PKG_VERSION = require("../package.json").version;
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
-app.use(express.json());
+// ========== H1: In-memory rate limiter ==========
+const rateLimitBuckets = new Map();
+
+function createRateLimiter(maxRequests, windowMs) {
+  return (req, res, next) => {
+    const ip = req.ip || req.connection.remoteAddress || "unknown";
+    const key = `${ip}:${req.route ? req.route.path : req.originalUrl}`;
+    const now = Date.now();
+
+    let bucket = rateLimitBuckets.get(key);
+    if (!bucket || now - bucket.windowStart > windowMs) {
+      bucket = { windowStart: now, count: 0 };
+      rateLimitBuckets.set(key, bucket);
+    }
+
+    bucket.count++;
+    if (bucket.count > maxRequests) {
+      return res.status(429).json({ error: "Too many requests, please try again later" });
+    }
+    next();
+  };
+}
+
+// Periodically clean up expired rate-limit entries (every 5 min)
+const rateLimitCleanupInterval = setInterval(() => {
+  const now = Date.now();
+  for (const [key, bucket] of rateLimitBuckets) {
+    if (now - bucket.windowStart > 15 * 60 * 1000) {
+      rateLimitBuckets.delete(key);
+    }
+  }
+}, 5 * 60 * 1000);
+
+const strictRateLimit = createRateLimiter(5, 15 * 60 * 1000);   // 5 per 15 min
+const chatRateLimit = createRateLimiter(30, 60 * 1000);          // 30 per min
+const generalRateLimit = createRateLimiter(100, 60 * 1000);      // 100 per min
+
+// ========== Middleware ==========
+
+// H6: CORS middleware
+app.use((req, res, next) => {
+  const allowedOriginsEnv = process.env.ALLOWED_ORIGINS;
+  if (allowedOriginsEnv) {
+    const allowedOrigins = allowedOriginsEnv.split(",").map((o) => o.trim());
+    const origin = req.headers.origin;
+    if (origin && allowedOrigins.includes(origin)) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+    }
+  } else {
+    // Dev mode: allow all
+    res.setHeader("Access-Control-Allow-Origin", "*");
+  }
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Request-Id, X-Telegram-Init-Data, X-Admin-Key");
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+  next();
+});
+
+// M7: Security headers
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("X-XSS-Protection", "1; mode=block");
+  res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  next();
+});
+
+// Body size limit
+app.use(express.json({ limit: "1mb" }));
+
+// General rate limit for all routes
+app.use(generalRateLimit);
+
 app.use((req, res, next) => {
   req.requestId = req.headers["x-request-id"] || createRequestId();
   res.setHeader("X-Request-Id", req.requestId);
@@ -195,7 +273,7 @@ async function getBearerMemberSession(req) {
 
 // ========== REST API (for web chat widget) ==========
 
-app.post("/api/chat", async (req, res) => {
+app.post("/api/chat", chatRateLimit, async (req, res) => {
   const { message, userName } = req.body;
 
   if (!message) {
@@ -243,7 +321,7 @@ app.post("/api/reset", async (req, res) => {
 
 // ========== Auth Endpoints ==========
 
-app.post("/api/auth/login", async (req, res) => {
+app.post("/api/auth/login", strictRateLimit, async (req, res) => {
   if (!authService) {
     return res.status(503).json({ error: "Auth not configured" });
   }
@@ -297,31 +375,43 @@ app.get("/api/auth/session", async (req, res) => {
   }
 });
 
-// Health check
+// Health check (L3: detailed info gated behind admin key)
 app.get("/api/health", (req, res) => {
-  res.json({
-    status: "ok",
-    service: "YBX Chatbot",
-    version: "2.0.0",
-    crm: !!crmClient,
-    persistence: !!stateRepository?.enabled,
-    repository: stateRepository?.getHealth?.() || { enabled: false, connected: false, lastError: null },
-    jobs: {
-      marginMonitor: marginMonitorHandle?.status || null,
-      positionMonitor: positionMonitorHandle?.status || null,
-    },
-    bots: {
-      telegram: !!process.env.TELEGRAM_BOT_TOKEN,
-      discord: !!process.env.DISCORD_BOT_TOKEN,
-      line: !!process.env.LINE_CHANNEL_ACCESS_TOKEN,
-    },
-  });
+  if (req.query.detail && req.headers["x-admin-key"] === process.env.ADMIN_API_KEY) {
+    return res.json({
+      status: "ok",
+      service: "YBX Chatbot",
+      version: PKG_VERSION,
+      crm: !!crmClient,
+      persistence: !!stateRepository?.enabled,
+      repository: stateRepository?.getHealth?.() || { enabled: false, connected: false, lastError: null },
+      jobs: {
+        marginMonitor: marginMonitorHandle?.status || null,
+        positionMonitor: positionMonitorHandle?.status || null,
+      },
+      bots: {
+        telegram: !!process.env.TELEGRAM_BOT_TOKEN,
+        discord: !!process.env.DISCORD_BOT_TOKEN,
+        line: !!process.env.LINE_CHANNEL_ACCESS_TOKEN,
+      },
+    });
+  }
+  res.json({ status: "ok" });
 });
 
 // TradingView webhook receiver (from your existing setup)
 app.post("/webhook/tradingview", (req, res) => {
+  // C2: Validate shared secret if configured
+  const webhookSecret = process.env.TRADINGVIEW_WEBHOOK_SECRET;
+  if (webhookSecret) {
+    const provided = req.headers["x-tradingview-secret"] || (req.body && req.body.secret);
+    if (provided !== webhookSecret) {
+      return res.status(401).json({ error: "Invalid webhook secret" });
+    }
+  }
+
   const signal = req.body;
-  console.log("📨 TradingView Signal:", JSON.stringify(signal));
+  console.log("TradingView Signal:", JSON.stringify(signal));
   // TODO: broadcast to subscribed users
   res.json({ success: true });
 });
@@ -368,7 +458,10 @@ function validateTelegramWebApp(req, res, next) {
       .update(dataCheckString)
       .digest("hex");
 
-    if (computed !== hash) {
+    // H5: Timing-safe comparison to prevent timing attacks
+    const computedBuf = Buffer.from(computed, "hex");
+    const hashBuf = Buffer.from(hash, "hex");
+    if (computedBuf.length !== hashBuf.length || !crypto.timingSafeEqual(computedBuf, hashBuf)) {
       return res.status(401).json({ error: "Invalid Telegram auth" });
     }
 
@@ -527,7 +620,7 @@ app.get("/api/webapp/profile", async (req, res) => {
 });
 
 // Mini App — Login directly from webapp
-app.post("/api/webapp/login", async (req, res) => {
+app.post("/api/webapp/login", strictRateLimit, async (req, res) => {
   if (!authService || !crmClient) {
     return res.status(503).json({ error: "Auth not available" });
   }
@@ -1235,7 +1328,7 @@ app.get("/api/lineapp/portfolio", async (req, res) => {
   }
 });
 
-app.post("/api/lineapp/chat", async (req, res) => {
+app.post("/api/lineapp/chat", chatRateLimit, async (req, res) => {
   const { message } = req.body;
   if (!message) return res.status(400).json({ error: "Message required" });
 
@@ -1269,7 +1362,7 @@ app.post("/api/lineapp/chat", async (req, res) => {
 });
 
 // Jerry AI Chat (for Mini App)
-app.post("/api/webapp/chat", async (req, res) => {
+app.post("/api/webapp/chat", chatRateLimit, async (req, res) => {
   const { message } = req.body;
   if (!message) return res.status(400).json({ error: "Message required" });
 
@@ -1490,7 +1583,7 @@ async function bootstrap() {
     console.log("⏭️ Persistent state disabled; using in-memory fallback");
   }
 
-  console.log("\n\uD83D\uDFE1 Yellow Box Markets — YBX Chatbot v2.0.0\n");
+  console.log(`\n\uD83D\uDFE1 Yellow Box Markets — YBX Chatbot v${PKG_VERSION}\n`);
 
   const telegramBot = setupTelegram(aiEngine, commandRouter, authService);
   setupDiscord(aiEngine, commandRouter, authService);
@@ -1519,12 +1612,42 @@ async function bootstrap() {
     stateRepository,
   });
 
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.log(`\n\uD83C\uDF10 Web chat: http://localhost:${PORT}`);
     console.log(`\uD83D\uDCE1 API endpoint: http://localhost:${PORT}/api/chat`);
     console.log(`\uD83D\uDC9A Health check: http://localhost:${PORT}/api/health\n`);
   });
+
+  // L1: Graceful shutdown
+  function gracefulShutdown(signal) {
+    console.log(`\n${signal} received. Shutting down gracefully...`);
+    server.close(() => {
+      console.log("HTTP server closed.");
+      if (marginMonitorHandle?.interval) clearInterval(marginMonitorHandle.interval);
+      if (positionMonitorHandle?.interval) clearInterval(positionMonitorHandle.interval);
+      clearInterval(rateLimitCleanupInterval);
+      process.exit(0);
+    });
+    // Force exit after 10 seconds if graceful shutdown fails
+    setTimeout(() => {
+      console.error("Forced shutdown after timeout.");
+      process.exit(1);
+    }, 10000);
+  }
+
+  process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+  process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 }
+
+// M6: Process error handlers
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("Unhandled Rejection at:", promise, "reason:", reason);
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught Exception:", err);
+  process.exit(1);
+});
 
 if (require.main === module) {
   bootstrap().catch((err) => {

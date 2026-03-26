@@ -159,11 +159,15 @@ async function handleEvent(event, client, aiEngine, commandRouter, authService) 
     // Step: waiting for email
     if (loginState && loginState.step === "email") {
       const email = text.trim();
-      if (!email.includes("@")) {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         return replyLine(client, replyToken, "\u26A0\uFE0F กรุณาส่งอีเมลที่ถูกต้อง หรือพิมพ์ \"ยกเลิก\" เพื่อยกเลิก");
       }
       authService.setLoginState("line", userId, { step: "password", email });
-      return replyLine(client, replyToken, `\uD83D\uDCE7 อีเมล: ${email}\n\n\uD83D\uDD11 กรุณาส่งรหัสผ่านของคุณ`);
+      return replyLine(client, replyToken,
+        `\uD83D\uDCE7 อีเมล: ${email}\n\n` +
+        `\u26A0\uFE0F ข้อควรระวัง: รหัสผ่านที่ส่งในแชทจะมองเห็นได้ในประวัติสนทนา หากมีตัวเลือก Web Login แนะนำให้ใช้ช่องทางนั้นแทน\n\n` +
+        `\uD83D\uDD11 กรุณาส่งรหัสผ่านของคุณ`
+      );
     }
 
     // Step: waiting for password

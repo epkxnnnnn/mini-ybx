@@ -257,6 +257,10 @@ class AuthService {
 
     try {
       const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString());
+      // Check if token is older than 24 hours
+      if (payload.t && (Date.now() - payload.t) > SESSION_TTL) {
+        return null;
+      }
       return { platform: payload.p, userId: payload.u };
     } catch {
       return null;

@@ -24,9 +24,12 @@ function normalizeDirection(struct) {
 }
 
 function symbolDecimals(symbol) {
+  if (symbol === 'XAUUSD') return 2;
+  if (symbol === 'XAGUSD') return 4;
   if (symbol.includes('JPY')) return 3;
   if (symbol.startsWith('BTC') || symbol.startsWith('ETH')) return 2;
-  return 2;
+  // Forex major/minor pairs default to 5 decimals
+  return 5;
 }
 
 /**

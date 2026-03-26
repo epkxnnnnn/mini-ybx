@@ -211,11 +211,20 @@ function startPositionMonitor({
     });
   }
 
-  const timer = setInterval(pollAll, POLL_INTERVAL);
+  let timer = null;
+  async function scheduleNext() {
+    try {
+      await pollAll();
+    } catch (err) {
+      log('error', 'position_monitor_poll_error', { error: err.message });
+    }
+    timer = setTimeout(scheduleNext, POLL_INTERVAL);
+  }
+  timer = setTimeout(scheduleNext, POLL_INTERVAL);
   log('info', 'position_monitor_started', { pollIntervalMs: POLL_INTERVAL });
 
   return {
-    timer,
+    get timer() { return timer; },
     pollAll,
     status,
     alertStates,

@@ -1105,6 +1105,16 @@
       return "$" + Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
 
+    function escapeHtml(str) {
+      if (str == null) return "";
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
     function healthBadge(score) {
       if (score >= 70) return { label: "Healthy", className: "good" };
       if (score >= 40) return { label: "Watch", className: "warn" };
@@ -1192,11 +1202,19 @@
     }
 
     function renderLoading(container, text) {
-      container.innerHTML = '<div class="loading">' + text + '</div>';
+      container.innerHTML = "";
+      var div = document.createElement("div");
+      div.className = "loading";
+      div.textContent = text;
+      container.appendChild(div);
     }
 
     function renderError(container, text) {
-      container.innerHTML = '<div class="error">' + text + '</div>';
+      container.innerHTML = "";
+      var div = document.createElement("div");
+      div.className = "error";
+      div.textContent = text;
+      container.appendChild(div);
     }
 
     function trackEvent(eventName, screen, payload) {
@@ -1254,10 +1272,16 @@
 
         var hero = document.createElement("div");
         hero.className = "hero";
-        hero.innerHTML =
-          "<div class='pill'>LINE Home</div>" +
-          "<h3>สวัสดี " + ((profile.member && profile.member.name) || "Trader") + "</h3>" +
-          "<p>เวอร์ชัน LINE นี้ออกแบบมาให้คุณเห็นภาพรวม, รับสัญญาณเตือน, เช็กพอร์ต และไปต่อ Telegram เมื่อถึงขั้น execution</p>";
+        var pill = document.createElement("div");
+        pill.className = "pill";
+        pill.textContent = "LINE Home";
+        hero.appendChild(pill);
+        var heroTitle = document.createElement("h3");
+        heroTitle.textContent = "สวัสดี " + ((profile.member && profile.member.name) || "Trader");
+        hero.appendChild(heroTitle);
+        var heroDesc = document.createElement("p");
+        heroDesc.textContent = "เวอร์ชัน LINE นี้ออกแบบมาให้คุณเห็นภาพรวม, รับสัญญาณเตือน, เช็กพอร์ต และไปต่อ Telegram เมื่อถึงขั้น execution";
+        hero.appendChild(heroDesc);
         var heroCta = document.createElement("div");
         heroCta.className = "cta-banner";
         heroCta.innerHTML =
@@ -1275,7 +1299,14 @@
         ].forEach(function(item) {
           var node = document.createElement("div");
           node.className = "metric";
-          node.innerHTML = "<span class='label'>" + item[0] + "</span><span class='value'>" + item[1] + "</span>";
+          var labelEl = document.createElement("span");
+          labelEl.className = "label";
+          labelEl.textContent = item[0];
+          node.appendChild(labelEl);
+          var valueEl = document.createElement("span");
+          valueEl.className = "value";
+          valueEl.textContent = item[1];
+          node.appendChild(valueEl);
           metrics.appendChild(node);
         });
         el.appendChild(metrics);
@@ -1455,7 +1486,14 @@
         ].forEach(function(item) {
           var node = document.createElement("div");
           node.className = "metric";
-          node.innerHTML = "<span class='label'>" + item[0] + "</span><span class='value'>" + item[1] + "</span>";
+          var labelEl = document.createElement("span");
+          labelEl.className = "label";
+          labelEl.textContent = item[0];
+          node.appendChild(labelEl);
+          var valueEl = document.createElement("span");
+          valueEl.className = "value";
+          valueEl.textContent = item[1];
+          node.appendChild(valueEl);
           metrics.appendChild(node);
         });
         el.appendChild(metrics);
@@ -1469,9 +1507,18 @@
           accounts.forEach(function(acct) {
             var row = document.createElement("div");
             row.className = "account-row";
-            row.innerHTML =
-              "<div class='account-row-head'><span>MT5 #" + (acct.login || acct.accountId || "N/A") + "</span><span>" + formatMoney(acct.balance) + "</span></div>" +
-              "<p>Equity " + formatMoney(acct.equity) + " • Leverage " + (acct.leverage ? ("1:" + acct.leverage) : "-") + "</p>";
+            var rowHead = document.createElement("div");
+            rowHead.className = "account-row-head";
+            var loginSpan = document.createElement("span");
+            loginSpan.textContent = "MT5 #" + (acct.login || acct.accountId || "N/A");
+            var balSpan = document.createElement("span");
+            balSpan.textContent = formatMoney(acct.balance);
+            rowHead.appendChild(loginSpan);
+            rowHead.appendChild(balSpan);
+            row.appendChild(rowHead);
+            var rowInfo = document.createElement("p");
+            rowInfo.textContent = "Equity " + formatMoney(acct.equity) + " \u2022 Leverage " + (acct.leverage ? ("1:" + acct.leverage) : "-");
+            row.appendChild(rowInfo);
             accountGrid.appendChild(row);
           });
         } else {
@@ -1601,32 +1648,53 @@
       button.className = "quick-action";
       button.type = "button";
       button.onclick = handler;
-      button.innerHTML = "<strong>" + title + "</strong><span>" + subtitle + "</span>";
+      var titleEl = document.createElement("strong");
+      titleEl.textContent = title;
+      button.appendChild(titleEl);
+      var subtitleEl = document.createElement("span");
+      subtitleEl.textContent = subtitle;
+      button.appendChild(subtitleEl);
       return button;
     }
 
     function makeStatus(title, badge, body) {
       var row = document.createElement("div");
       row.className = "status-row";
-      row.innerHTML = "<span class='badge " + badge.className + "'>" + badge.label + "</span><strong>" + title + "</strong><p>" + body + "</p>";
+      var badgeEl = document.createElement("span");
+      badgeEl.className = "badge " + badge.className;
+      badgeEl.textContent = badge.label;
+      row.appendChild(badgeEl);
+      var titleEl = document.createElement("strong");
+      titleEl.textContent = title;
+      row.appendChild(titleEl);
+      var bodyEl = document.createElement("p");
+      bodyEl.textContent = body;
+      row.appendChild(bodyEl);
       return row;
     }
 
     function makeSignal(sig, showMore, source) {
       var item = document.createElement("div");
       item.className = "signal-item";
-      var badge = ((sig.direction || "").toLowerCase() === "buy") ? "buy" : "sell";
-      item.innerHTML =
-        "<span class='badge " + badge + "'>" + (sig.direction || "VIEW") + "</span>" +
-        "<strong>" + (sig.symbol || "Market") + "</strong>" +
-        "<p>" + (sig.analysis || "Tap Jerry for more context.") + "</p>" +
-        "<p style='margin-top:8px;'>" +
-        "Entry " + (sig.entry || "-") + " • SL " + (sig.sl || "-") + " • TP " + (sig.tp || "-") +
-        (showMore ? (" • R:R " + (sig.riskReward || "-")) : "") +
-        "</p>";
+      var badgeClass = ((sig.direction || "").toLowerCase() === "buy") ? "buy" : "sell";
+      var badgeEl = document.createElement("span");
+      badgeEl.className = "badge " + badgeClass;
+      badgeEl.textContent = sig.direction || "VIEW";
+      item.appendChild(badgeEl);
+      var symbolEl = document.createElement("strong");
+      symbolEl.textContent = sig.symbol || "Market";
+      item.appendChild(symbolEl);
+      var analysisEl = document.createElement("p");
+      analysisEl.textContent = sig.analysis || "Tap Jerry for more context.";
+      item.appendChild(analysisEl);
+      var levelsEl = document.createElement("p");
+      levelsEl.style.marginTop = "8px";
+      levelsEl.textContent = "Entry " + (sig.entry || "-") + " \u2022 SL " + (sig.sl || "-") + " \u2022 TP " + (sig.tp || "-") +
+        (showMore ? (" \u2022 R:R " + (sig.riskReward || "-")) : "");
+      item.appendChild(levelsEl);
       var cta = document.createElement("a");
       cta.className = "link-cta";
-      cta.textContent = "Execute on Telegram →";
+      cta.textContent = "Execute on Telegram \u2192";
       cta.onclick = function() { openTelegram(source || "signal_card"); };
       item.appendChild(cta);
       return item;
@@ -1635,7 +1703,12 @@
     function makeSupportItem(title, body) {
       var item = document.createElement("div");
       item.className = "support-item";
-      item.innerHTML = "<strong>" + title + "</strong><p>" + body + "</p>";
+      var titleEl = document.createElement("strong");
+      titleEl.textContent = title;
+      item.appendChild(titleEl);
+      var bodyEl = document.createElement("p");
+      bodyEl.textContent = body;
+      item.appendChild(bodyEl);
       return item;
     }
 
@@ -1653,10 +1726,21 @@
       var label = item.type || "activity";
       var wrapper = document.createElement("div");
       wrapper.className = "activity-item " + tone;
-      wrapper.innerHTML =
-        "<div class='activity-meta'><span>" + label + "</span><span>" + formatStamp(item.stamp) + "</span></div>" +
-        "<strong>" + item.title + "</strong>" +
-        "<p>" + item.body + "</p>";
+      var meta = document.createElement("div");
+      meta.className = "activity-meta";
+      var labelSpan = document.createElement("span");
+      labelSpan.textContent = label;
+      var stampSpan = document.createElement("span");
+      stampSpan.textContent = formatStamp(item.stamp);
+      meta.appendChild(labelSpan);
+      meta.appendChild(stampSpan);
+      wrapper.appendChild(meta);
+      var titleEl = document.createElement("strong");
+      titleEl.textContent = item.title;
+      wrapper.appendChild(titleEl);
+      var bodyEl = document.createElement("p");
+      bodyEl.textContent = item.body;
+      wrapper.appendChild(bodyEl);
       return wrapper;
     }
 

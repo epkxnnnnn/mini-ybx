@@ -13,7 +13,12 @@ class StateRepository {
 
     this.pool = new Pool({
       connectionString: this.connectionString,
-      ssl: process.env.PGSSLMODE === 'disable' ? false : { rejectUnauthorized: false },
+      ssl: process.env.PGSSLMODE === 'disable'
+        ? false
+        : {
+            rejectUnauthorized: process.env.NODE_ENV === 'production' || !!process.env.PGSSLCERT,
+            ...(process.env.PGSSLCERT ? { ca: require('fs').readFileSync(process.env.PGSSLCERT) } : {}),
+          },
     });
 
     await this.pool.query(`

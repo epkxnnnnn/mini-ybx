@@ -413,6 +413,12 @@ function setupTelegram(aiEngine, commandRouter, authService) {
 
   // ========== Trade Plan & Order Execution Callback Queries ==========
   bot.on("callback_query", async (query) => {
+    try {
+    if (!query.message) {
+      await bot.answerCallbackQuery(query.id, { text: "ข้อความหมดอายุ" });
+      return;
+    }
+
     const data = query.data;
     const chatId = query.message.chat.id;
     const userId = query.from.id;
@@ -539,8 +545,8 @@ function setupTelegram(aiEngine, commandRouter, authService) {
           { reply_markup: { inline_keyboard: keyboard } }
         );
       } catch (err) {
-        console.error("Fetch accounts error:", err.message);
-        await bot.sendMessage(chatId, "\u274C ไม่สามารถโหลดบัญชีได้: " + err.message);
+        console.error("Fetch accounts error:", err);
+        await bot.sendMessage(chatId, "\u274C ไม่สามารถโหลดบัญชีได้ กรุณาลองใหม่อีกครั้ง");
         tradePlanService.clearOrderState("telegram", userId);
       }
       return;
@@ -555,11 +561,15 @@ function setupTelegram(aiEngine, commandRouter, authService) {
         return;
       }
 
-      await bot.answerCallbackQuery(query.id);
-
       const account = Array.isArray(state.accounts)
         ? state.accounts.find((item) => String(item.login || item.accountId || item.id) === accountId)
         : null;
+      if (!account) {
+        await bot.answerCallbackQuery(query.id, { text: "บัญชีที่เลือกไม่ถูกต้อง" });
+        return;
+      }
+
+      await bot.answerCallbackQuery(query.id);
       state.accountId = accountId;
       state.accountLogin = accountId;
       state.account = account || null;
@@ -614,6 +624,13 @@ function setupTelegram(aiEngine, commandRouter, authService) {
         return;
       }
 
+      // Validate volume matches one of the sizing suggestions if available
+      const allowedLots = state.sizing?.suggestions?.map((s) => s.lot) || [];
+      if (allowedLots.length > 0 && !allowedLots.includes(volume)) {
+        await bot.answerCallbackQuery(query.id, { text: "Lot ที่เลือกไม่ตรงกับตัวเลือกที่แนะนำ" });
+        return;
+      }
+
       state.volume = volume;
       state.step = 'select_type';
       tradePlanService.setOrderState("telegram", userId, state);
@@ -644,7 +661,14 @@ function setupTelegram(aiEngine, commandRouter, authService) {
 
     // --- Order Type Selection ---
     if (data.startsWith("order_type:")) {
+      const ALLOWED_ORDER_TYPES = new Set(["MARKET", "LIMIT", "STOP"]);
       const orderType = data.slice("order_type:".length);
+
+      if (!ALLOWED_ORDER_TYPES.has(orderType)) {
+        await bot.answerCallbackQuery(query.id, { text: "ประเภทคำสั่งไม่ถูกต้อง" });
+        return;
+      }
+
       const state = tradePlanService.getOrderState("telegram", userId);
       if (!state || state.step !== 'select_type') {
         await bot.answerCallbackQuery(query.id, { text: "ไม่มีคำสั่งที่รอดำเนินการ" });
@@ -698,6 +722,10 @@ function setupTelegram(aiEngine, commandRouter, authService) {
         await bot.answerCallbackQuery(query.id, { text: "ไม่มีคำสั่งที่รอดำเนินการ" });
         return;
       }
+
+      // Prevent double-click duplicate trades
+      state.step = 'executing';
+      tradePlanService.setOrderState("telegram", userId, state);
 
       if (!crmClient || !authServiceRef) {
         await bot.answerCallbackQuery(query.id, { text: "ระบบเทรดยังไม่พร้อม" });
@@ -780,7 +808,7 @@ function setupTelegram(aiEngine, commandRouter, authService) {
           `SL: $${state.plan.sl} | TP: $${state.plan.tp}`
         );
       } catch (err) {
-        console.error("Order execution error:", err.message);
+        console.error("Order execution error:", err);
         recordExecutionEvent({
           platform: "telegram",
           userId,
@@ -790,7 +818,7 @@ function setupTelegram(aiEngine, commandRouter, authService) {
           correlationId: state.planId,
           payload: { error: err.message },
         });
-        await bot.sendMessage(chatId, `\u274C คำสั่งไม่สำเร็จ: ${err.message}`);
+        await bot.sendMessage(chatId, "\u274C คำสั่งไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
       }
 
       tradePlanService.clearOrderState("telegram", userId);
@@ -867,6 +895,14 @@ function setupTelegram(aiEngine, commandRouter, authService) {
         return;
       }
 
+      // Prevent double-click duplicate actions
+      if (pendingAction.executing) {
+        await bot.answerCallbackQuery(query.id, { text: "กำลังดำเนินการอยู่แล้ว" });
+        return;
+      }
+      pendingAction.executing = true;
+      tradePlanService.setPositionState("telegram", userId, positionState);
+
       if (!crmClient || !authServiceRef) {
         await bot.answerCallbackQuery(query.id, { text: "ระบบเทรดยังไม่พร้อม" });
         return;
@@ -930,28 +966,66 @@ function setupTelegram(aiEngine, commandRouter, authService) {
           });
         } else if (pendingAction.action === "secure_profit") {
           const volume = Math.min(position.volume, Math.max(0.01, Math.round((position.volume / 2) * 100) / 100));
-          await crmClient.closePosition(session.accessToken, position.accountId, position.ticket, volume);
-          await crmClient.modifyPosition(session.accessToken, position.accountId, position.ticket, {
-            stopLoss: position.openPrice,
-            takeProfit: position.takeProfit,
-          });
-          await bot.sendMessage(chatId,
-            `✅ ล็อกกำไรสำเร็จ\n${position.symbol} ${position.direction}\nปิด 50% (${volume} lots) และเลื่อน SL ไปที่ Break-even ${formatUsd(position.openPrice)}`
-          );
-          recordExecutionEvent({
-            platform: "telegram",
-            userId,
-            category: "position",
-            action: "secure_profit",
-            status: "success",
-            correlationId: position.ticket,
-            payload: { accountId: position.accountId, symbol: position.symbol, volume, stopLoss: position.openPrice },
-          });
+          let closeSuccess = false;
+          let modifySuccess = false;
+
+          // Step 1: Close 50%
+          try {
+            await crmClient.closePosition(session.accessToken, position.accountId, position.ticket, volume);
+            closeSuccess = true;
+          } catch (closeErr) {
+            console.error("Secure profit - close position error:", closeErr);
+            await bot.sendMessage(chatId,
+              `❌ ล็อกกำไรไม่สำเร็จ — ปิด 50% ล้มเหลว\n${position.symbol} ${position.direction}`
+            );
+          }
+
+          // Step 2: Move SL to BE (only attempt if close succeeded)
+          if (closeSuccess) {
+            try {
+              await crmClient.modifyPosition(session.accessToken, position.accountId, position.ticket, {
+                stopLoss: position.openPrice,
+                takeProfit: position.takeProfit,
+              });
+              modifySuccess = true;
+            } catch (modifyErr) {
+              console.error("Secure profit - modify position error:", modifyErr);
+            }
+          }
+
+          // Report result
+          if (closeSuccess && modifySuccess) {
+            await bot.sendMessage(chatId,
+              `✅ ล็อกกำไรสำเร็จ\n${position.symbol} ${position.direction}\nปิด 50% (${volume} lots) และเลื่อน SL ไปที่ Break-even ${formatUsd(position.openPrice)}`
+            );
+            recordExecutionEvent({
+              platform: "telegram",
+              userId,
+              category: "position",
+              action: "secure_profit",
+              status: "success",
+              correlationId: position.ticket,
+              payload: { accountId: position.accountId, symbol: position.symbol, volume, stopLoss: position.openPrice },
+            });
+          } else if (closeSuccess && !modifySuccess) {
+            await bot.sendMessage(chatId,
+              `⚠️ ล็อกกำไรสำเร็จบางส่วน\n${position.symbol} ${position.direction}\n✅ ปิด 50% (${volume} lots) สำเร็จ\n❌ เลื่อน SL ไปที่ Break-even ไม่สำเร็จ — กรุณาตั้ง SL ด้วยตนเอง`
+            );
+            recordExecutionEvent({
+              platform: "telegram",
+              userId,
+              category: "position",
+              action: "secure_profit",
+              status: "partial",
+              correlationId: position.ticket,
+              payload: { accountId: position.accountId, symbol: position.symbol, volume, closeSuccess: true, modifySuccess: false },
+            });
+          }
         } else {
           await bot.sendMessage(chatId, "❌ ไม่รู้จัก action ที่เลือก");
         }
       } catch (err) {
-        console.error("Position action error:", err.message);
+        console.error("Position action error:", err);
         recordExecutionEvent({
           platform: "telegram",
           userId,
@@ -961,7 +1035,7 @@ function setupTelegram(aiEngine, commandRouter, authService) {
           correlationId: position.ticket,
           payload: { error: err.message, accountId: position.accountId, symbol: position.symbol },
         });
-        await bot.sendMessage(chatId, `❌ ดำเนินการกับสถานะไม่สำเร็จ: ${err.message}`);
+        await bot.sendMessage(chatId, "❌ ดำเนินการกับสถานะไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
       }
 
       tradePlanService.clearPositionState("telegram", userId);
@@ -1057,8 +1131,8 @@ function setupTelegram(aiEngine, commandRouter, authService) {
           reply_markup: { inline_keyboard: keyboard },
         });
       } catch (err) {
-        console.error("Fetch accounts for transfer error:", err.message);
-        await bot.sendMessage(chatId, "\u274C ไม่สามารถโหลดบัญชีได้: " + err.message);
+        console.error("Fetch accounts for transfer error:", err);
+        await bot.sendMessage(chatId, "\u274C ไม่สามารถโหลดบัญชีได้ กรุณาลองใหม่อีกครั้ง");
         tradePlanService.clearTxnState("telegram", userId);
       }
       return;
@@ -1089,6 +1163,10 @@ function setupTelegram(aiEngine, commandRouter, authService) {
         await bot.answerCallbackQuery(query.id, { text: "ไม่มีรายการที่รอดำเนินการ" });
         return;
       }
+
+      // Prevent double-click duplicate transactions
+      txnState.step = 'executing';
+      tradePlanService.setTxnState("telegram", userId, txnState);
 
       if (!crmClient || !authServiceRef) {
         await bot.answerCallbackQuery(query.id, { text: "ระบบยังไม่พร้อม" });
@@ -1130,9 +1208,9 @@ function setupTelegram(aiEngine, commandRouter, authService) {
           await sendDepositPaymentInfo(bot, chatId, txnState.paymentMethod, txnState.amount, resData);
         }
       } catch (err) {
-        console.error("Transaction error:", err.message);
+        console.error("Transaction error:", err);
         const typeLabel = txnState.type === 'deposit' ? 'ฝากเงิน' : txnState.type === 'withdraw' ? 'ถอนเงิน' : 'โอนเงิน';
-        await bot.sendMessage(chatId, `\u274C ${typeLabel}ไม่สำเร็จ: ${err.message}`);
+        await bot.sendMessage(chatId, `\u274C ${typeLabel}ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง`);
       }
 
       tradePlanService.clearTxnState("telegram", userId);
@@ -1148,6 +1226,10 @@ function setupTelegram(aiEngine, commandRouter, authService) {
     }
 
     await bot.answerCallbackQuery(query.id);
+    } catch (topLevelErr) {
+      console.error("Callback query top-level error:", topLevelErr);
+      bot.answerCallbackQuery(query.id, { text: "เกิดข้อผิดพลาด" }).catch(() => {});
+    }
   });
 
   // Handle web_app_data from Mini App
@@ -1201,11 +1283,16 @@ function setupTelegram(aiEngine, commandRouter, authService) {
         }
 
         if (edit.stopLoss != null) {
-          if (position.direction === 'BUY' && edit.stopLoss >= position.openPrice) {
-            return bot.sendMessage(chatId, "⚠️ สำหรับ BUY ตำแหน่ง Stop Loss ควรต่ำกว่า Open Price");
+          if (edit.stopLoss <= 0) {
+            return bot.sendMessage(chatId, "⚠️ Stop Loss ต้องมีค่ามากกว่า 0");
           }
-          if (position.direction === 'SELL' && edit.stopLoss <= position.openPrice) {
-            return bot.sendMessage(chatId, "⚠️ สำหรับ SELL ตำแหน่ง Stop Loss ควรสูงกว่า Open Price");
+          // Allow SL at or beyond open price (trailing stop / profit lock)
+          // Only block clearly invalid SL: BUY with SL above TP, SELL with SL below TP
+          if (position.direction === 'BUY' && position.takeProfit && edit.stopLoss >= position.takeProfit) {
+            return bot.sendMessage(chatId, "⚠️ สำหรับ BUY ตำแหน่ง Stop Loss ต้องต่ำกว่า Take Profit");
+          }
+          if (position.direction === 'SELL' && position.takeProfit && edit.stopLoss <= position.takeProfit) {
+            return bot.sendMessage(chatId, "⚠️ สำหรับ SELL ตำแหน่ง Stop Loss ต้องสูงกว่า Take Profit");
           }
         }
         if (edit.takeProfit != null) {
@@ -1248,6 +1335,7 @@ function setupTelegram(aiEngine, commandRouter, authService) {
             `TP: ${formatUsd(edit.takeProfit != null ? edit.takeProfit : position.takeProfit)}`
           );
         } catch (err) {
+          console.error("Edit SL/TP error:", err);
           recordExecutionEvent({
             platform: "telegram",
             userId,
@@ -1257,7 +1345,7 @@ function setupTelegram(aiEngine, commandRouter, authService) {
             correlationId: position.ticket,
             payload: { error: err.message, accountId: position.accountId, symbol: position.symbol, ...edit },
           });
-          return bot.sendMessage(chatId, `❌ แก้ไข SL/TP ไม่สำเร็จ: ${err.message}`);
+          return bot.sendMessage(chatId, "❌ แก้ไข SL/TP ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
         }
       }
 
@@ -1271,8 +1359,16 @@ function setupTelegram(aiEngine, commandRouter, authService) {
       // Step: waiting for amount (deposit/withdraw/transfer)
       if (txnState && txnState.step === 'enter_amount') {
         const amount = parseFloat(text);
-        if (isNaN(amount) || amount <= 0) {
+        if (!Number.isFinite(amount) || amount <= 0) {
           return bot.sendMessage(chatId, "\u26A0\uFE0F กรุณาพิมพ์จำนวนเงินที่ถูกต้อง (เช่น 100, 500.50)\nหรือพิมพ์ /cancel เพื่อยกเลิก");
+        }
+        if (amount > 10000000) {
+          return bot.sendMessage(chatId, "\u26A0\uFE0F จำนวนเงินเกินขีดจำกัดสูงสุด (10,000,000 USD)\nกรุณาพิมพ์จำนวนเงินใหม่ หรือ /cancel เพื่อยกเลิก");
+        }
+        // Validate max 2 decimal places
+        const decimalMatch = text.match(/\.(\d+)$/);
+        if (decimalMatch && decimalMatch[1].length > 2) {
+          return bot.sendMessage(chatId, "\u26A0\uFE0F จำนวนเงินรองรับทศนิยมสูงสุด 2 ตำแหน่ง (เช่น 100.50)\nหรือพิมพ์ /cancel เพื่อยกเลิก");
         }
 
         txnState.amount = amount;
@@ -1409,8 +1505,9 @@ function setupTelegram(aiEngine, commandRouter, authService) {
           welcomeText += `\nพร้อมช่วยเหลือแล้วครับ! \uD83D\uDCAC`;
           return bot.sendMessage(chatId, welcomeText);
         } catch (err) {
+          console.error("Login error:", err);
           authService.clearLoginState("telegram", userId);
-          return bot.sendMessage(chatId, `\u274C เข้าสู่ระบบไม่สำเร็จ: ${err.message}\n\nพิมพ์ /login เพื่อลองใหม่`);
+          return bot.sendMessage(chatId, "\u274C เข้าสู่ระบบไม่สำเร็จ กรุณาตรวจสอบอีเมลและรหัสผ่าน\n\nพิมพ์ /login เพื่อลองใหม่");
         }
       }
 
@@ -1556,8 +1653,8 @@ function setupTelegram(aiEngine, commandRouter, authService) {
           });
         }
       } catch (err) {
-        console.error("Positions fetch error:", err.message);
-        return bot.sendMessage(chatId, `❌ ไม่สามารถโหลดสถานะได้: ${err.message}`);
+        console.error("Positions fetch error:", err);
+        return bot.sendMessage(chatId, "❌ ไม่สามารถโหลดสถานะได้ กรุณาลองใหม่อีกครั้ง");
       }
       return;
     }

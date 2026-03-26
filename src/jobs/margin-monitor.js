@@ -187,10 +187,19 @@ function startMarginMonitor({ authService, crmClient, guardianService, telegramB
     }
   }
 
-  const timer = setInterval(pollAll, POLL_INTERVAL);
+  let timer = null;
+  async function scheduleNext() {
+    try {
+      await pollAll();
+    } catch (err) {
+      console.error("[Margin Monitor] Poll error:", err.message);
+    }
+    timer = setTimeout(scheduleNext, POLL_INTERVAL);
+  }
+  timer = setTimeout(scheduleNext, POLL_INTERVAL);
   console.log(`\u2705 Margin monitor started (interval: ${POLL_INTERVAL / 1000}s)`);
 
-  return { timer, pollAll, alertStates, status };
+  return { get timer() { return timer; }, pollAll, alertStates, status };
 }
 
 module.exports = {

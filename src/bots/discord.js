@@ -17,6 +17,9 @@ function setupDiscord(aiEngine, commandRouter, authService) {
     console.log("⏭️  Discord: No token, skipping");
     return null;
   }
+  if (!appId) {
+    console.warn("⚠️  Discord: DISCORD_APP_ID is not set — slash commands will not be registered");
+  }
 
   const client = new Client({
     intents: [
@@ -93,13 +96,11 @@ function setupDiscord(aiEngine, commandRouter, authService) {
     const symbolOpt = interaction.options?.getString("symbol") || "";
     const cmdText = symbolOpt ? `/${cmdName} ${symbolOpt}` : `/${cmdName}`;
 
+    // Defer reply for all slash commands since any may take time
+    await interaction.deferReply();
+
     // Route through command router
     if (commandRouter) {
-      // Defer for commands that may take time
-      if (["analyze", "price", "news", "levels", "rate"].includes(cmdName)) {
-        await interaction.deferReply();
-      }
-
       const result = await commandRouter.execute(cmdText, "discord", userId, userName);
       if (result) {
         return sendDiscordReply(interaction, result.text);
@@ -119,7 +120,7 @@ function setupDiscord(aiEngine, commandRouter, authService) {
           { name: "5️⃣ SIZE", value: "คำนวณ Lot Size ตาม risk 1-2%", inline: true }
         )
         .setFooter({ text: "ตรวจครบ 5 ข้อก่อนเข้าเทรดทุกครั้ง!" });
-      return interaction.reply({ embeds: [embed] });
+      return interaction.editReply({ embeds: [embed] });
     }
 
     if (cmdName === "zones") {
@@ -137,17 +138,16 @@ function setupDiscord(aiEngine, commandRouter, authService) {
             "D     | ★☆☆☆☆ | No confluence | SKIP | -\n" +
             "```"
         );
-      return interaction.reply({ embeds: [embed] });
+      return interaction.editReply({ embeds: [embed] });
     }
 
     if (cmdName === "reset") {
       aiEngine.resetConversation("discord", userId);
-      return interaction.reply("🔄 เริ่มบทสนทนาใหม่แล้วครับ");
+      return interaction.editReply("🔄 เริ่มบทสนทนาใหม่แล้วครับ");
     }
 
     // analyze fallback (no command router)
     if (cmdName === "analyze") {
-      if (!interaction.deferred) await interaction.deferReply();
       try {
         const reply = await aiEngine.chat(
           "discord", userId,
@@ -182,9 +182,14 @@ function setupDiscord(aiEngine, commandRouter, authService) {
 
     // Try command router for slash-like commands in DMs
     if (text.startsWith("/") && commandRouter) {
-      const result = await commandRouter.execute(text, "discord", userId, userName);
-      if (result) {
-        return sendDiscordMessage(message, result.text);
+      try {
+        const result = await commandRouter.execute(text, "discord", userId, userName);
+        if (result) {
+          return sendDiscordMessage(message, result.text);
+        }
+      } catch (routerErr) {
+        console.error("Discord command router error:", routerErr.message);
+        return message.reply("❌ เกิดข้อผิดพลาดในการประมวลผลคำสั่ง กรุณาลองใหม่ครับ");
       }
     }
 
