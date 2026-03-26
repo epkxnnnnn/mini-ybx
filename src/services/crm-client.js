@@ -4,6 +4,35 @@
  */
 const { log, withTiming } = require('./logger');
 
+// ========== Trading parameter validation helpers ==========
+
+function validateSymbol(symbol) {
+  if (!symbol || typeof symbol !== 'string') {
+    throw new Error('Invalid symbol: must be a non-empty string');
+  }
+  if (!/^[A-Za-z.]+$/.test(symbol)) {
+    throw new Error('Invalid symbol: must contain only letters and dots');
+  }
+}
+
+function validateSide(side) {
+  if (side !== 'BUY' && side !== 'SELL') {
+    throw new Error(`Invalid side: must be 'BUY' or 'SELL', got '${side}'`);
+  }
+}
+
+function validateVolume(volume) {
+  if (typeof volume !== 'number' || !Number.isFinite(volume)) {
+    throw new Error('Invalid volume: must be a finite number');
+  }
+  if (volume <= 0) {
+    throw new Error('Invalid volume: must be greater than 0');
+  }
+  if (volume > 100) {
+    throw new Error('Invalid volume: must be <= 100');
+  }
+}
+
 class CRMClient {
   constructor({ baseUrl, email, password }) {
     this.baseUrl = (baseUrl || '').replace(/\/+$/, '');
@@ -112,11 +141,18 @@ class CRMClient {
     });
   }
 
-  async _fetchJson(url, options, meta) {
-    return withTiming('crm_http', meta, async () => {
-      const res = await fetch(url, options);
-      return { res, json: null };
-    });
+  async _fetchJson(url, options = {}, meta) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    options.signal = controller.signal;
+    try {
+      return await withTiming('crm_http', meta, async () => {
+        const res = await fetch(url, options);
+        return { res, json: null };
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 
   /**
@@ -193,7 +229,7 @@ class CRMClient {
       ? await this._publicGet(path, query)
       : await this._get(path, query);
     // Shorter TTL for price data (3s), default 60s for others
-    var ttl = (cacheKey === 'tick-stats' || cacheKey === 'prices') ? 3000 : this.cacheTTL;
+    const ttl = (cacheKey === 'tick-stats' || cacheKey === 'prices') ? 3000 : this.cacheTTL;
     this.cache.set(cacheKey, { data, expiry: Date.now() + ttl });
     return data;
   }
@@ -259,13 +295,6 @@ class CRMClient {
     }
 
     return res.json();
-  }
-
-  /**
-   * Get member's own profile
-   */
-  async getMemberProfile(memberToken) {
-    return this._memberGet(memberToken, '/api/v1/profile/me');
   }
 
   /**
@@ -375,7 +404,11 @@ class CRMClient {
    * Place a market order
    */
   async placeOrder(memberToken, accountId, { symbol, side, volume, stopLoss, takeProfit }) {
-    return this._memberPost(memberToken, `/api/v1/trading/accounts/${accountId}/orders`, {
+    validateSymbol(symbol);
+    validateSide(side);
+    validateVolume(volume);
+    const safeAccountId = encodeURIComponent(accountId);
+    return this._memberPost(memberToken, `/api/v1/trading/accounts/${safeAccountId}/orders`, {
       Mt5AccountId: accountId,
       Symbol: symbol,
       Side: side,
@@ -390,7 +423,11 @@ class CRMClient {
    * Place a pending order (limit/stop)
    */
   async placePendingOrder(memberToken, accountId, { symbol, side, orderType, price, volume, stopLoss, takeProfit }) {
-    return this._memberPost(memberToken, `/api/v1/trading/accounts/${accountId}/pending-orders`, {
+    validateSymbol(symbol);
+    validateSide(side);
+    validateVolume(volume);
+    const safeAccountId = encodeURIComponent(accountId);
+    return this._memberPost(memberToken, `/api/v1/trading/accounts/${safeAccountId}/pending-orders`, {
       Mt5AccountId: accountId,
       Symbol: symbol,
       Side: side,
@@ -407,7 +444,10 @@ class CRMClient {
    * Close an open position
    */
   async closePosition(memberToken, accountId, positionTicket, volume) {
-    return this._memberPost(memberToken, `/api/v1/trading/accounts/${accountId}/positions/${positionTicket}/close`, {
+    validateVolume(volume);
+    const safeAccountId = encodeURIComponent(accountId);
+    const safeTicket = encodeURIComponent(positionTicket);
+    return this._memberPost(memberToken, `/api/v1/trading/accounts/${safeAccountId}/positions/${safeTicket}/close`, {
       Volume: volume,
     });
   }
@@ -416,7 +456,9 @@ class CRMClient {
    * Modify position TP/SL
    */
   async modifyPosition(memberToken, accountId, positionTicket, { takeProfit, stopLoss }) {
-    return this._memberPut(memberToken, `/api/v1/trading/accounts/${accountId}/positions/${positionTicket}`, {
+    const safeAccountId = encodeURIComponent(accountId);
+    const safeTicket = encodeURIComponent(positionTicket);
+    return this._memberPut(memberToken, `/api/v1/trading/accounts/${safeAccountId}/positions/${safeTicket}`, {
       TakeProfit: takeProfit,
       StopLoss: stopLoss,
     });
@@ -426,7 +468,7 @@ class CRMClient {
    * Get account positions
    */
   async getAccountPositions(memberToken, accountId) {
-    return this._memberGet(memberToken, `/api/v1/trading/accounts/${accountId}/positions`);
+    return this._memberGet(memberToken, `/api/v1/trading/accounts/${encodeURIComponent(accountId)}/positions`);
   }
 
   /**
@@ -502,6 +544,10 @@ class CRMClient {
       `liquidity-sweeps:${symbol}`,
       `/api/v1/ai-assistant/liquidity-sweeps/${encodeURIComponent(symbol)}`
     );
+  }
+
+  async getMarketOverview() {
+    return this._cachedGet('market-overview', '/api/v1/ai-assistant/market-overview');
   }
 
   // ========== Calendar & Rates ==========
