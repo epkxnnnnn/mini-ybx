@@ -658,6 +658,22 @@ app.get("/api/webapp/transactions", async (req, res) => {
   }
 });
 
+app.get("/api/webapp/positions", async (req, res) => {
+  const session = await getMemberSession(req);
+  if (!session) return res.status(401).json({ error: "Please login first" });
+  try {
+    const positionsRes = await crmClient.getMemberPositions(session.accessToken);
+    const rawPositions = positionsRes?.data
+      ? (Array.isArray(positionsRes.data) ? positionsRes.data : (positionsRes.data.positions || []))
+      : (Array.isArray(positionsRes) ? positionsRes : []);
+    const positions = rawPositions.map(normalizePosition).filter(Boolean);
+    res.json({ positions, fetchedAt: new Date().toISOString() });
+  } catch (err) {
+    console.error("WebApp positions error:", err.message);
+    res.status(500).json({ error: "Failed to fetch positions" });
+  }
+});
+
 app.get("/api/webapp/wallets", async (req, res) => {
   const session = await getMemberSession(req);
   if (!session) return res.status(401).json({ error: "Please login first" });

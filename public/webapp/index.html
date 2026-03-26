@@ -3128,10 +3128,12 @@ function createSignalBrief(signal) {
 
   var meta = document.createElement('div');
   meta.className = 'signal-brief-meta';
+  var entryValue = signal.entry != null ? signal.entry : signal.entryPrice;
+  var rrValue = signal.riskReward || (signal.riskRewardRatio != null ? ('1:' + Number(signal.riskRewardRatio).toFixed(1)) : '-');
   var left = document.createElement('span');
-  left.textContent = 'Entry ' + (signal.entry || '-');
+  left.textContent = 'Entry ' + (entryValue != null ? entryValue : '-');
   var right = document.createElement('span');
-  right.textContent = 'R:R ' + (signal.riskReward || '-');
+  right.textContent = 'R:R ' + rrValue;
   meta.appendChild(left);
   meta.appendChild(right);
 
@@ -3141,33 +3143,77 @@ function createSignalBrief(signal) {
   return item;
 }
 
+function getSignalDirectionClass(direction) {
+  var normalized = String(direction || '').toLowerCase();
+  return normalized === 'buy' ? 'buy' : 'sell';
+}
+
+function getSignalEntry(signal) {
+  return signal.entry != null ? signal.entry : signal.entryPrice;
+}
+
+function getSignalStopLoss(signal) {
+  return signal.sl != null ? signal.sl : signal.stopLoss;
+}
+
+function getSignalTakeProfit(signal) {
+  return signal.tp != null ? signal.tp : signal.takeProfit1;
+}
+
+function getSignalRiskReward(signal) {
+  if (signal.riskReward) return signal.riskReward;
+  if (signal.riskRewardRatio != null) return '1:' + Number(signal.riskRewardRatio).toFixed(1);
+  return '-';
+}
+
+function createUpdatedAtNote(label, value) {
+  if (!value) return null;
+  var note = document.createElement('div');
+  note.style.cssText = 'margin-top:10px;font-size:12px;color:var(--ybx-text-dim);';
+  note.textContent = label + ' ' + new Date(value).toLocaleString([], {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+  return note;
+}
+
 function loadHome() {
   var content = document.getElementById('home-content');
   var loading = document.getElementById('home-loading');
   content.textContent = '';
   loading.style.display = 'flex';
 
-  Promise.all([
-    apiFetch('/profile').catch(function() { return {}; }),
-    apiFetch('/accounts').catch(function() { return { data: [] }; }),
-    apiFetch('/portfolio').catch(function() { return {}; }),
-    apiFetch('/ai-signals').catch(function() { return { signals: [] }; }),
-    apiFetch('/transactions/summary').catch(function() { return { data: {} }; }),
-    apiFetch('/safeguards').catch(function() { return { guardian: { active: false }, events: [] }; })
+  Promise.allSettled([
+    apiFetch('/profile'),
+    apiFetch('/accounts'),
+    apiFetch('/portfolio'),
+    apiFetch('/ai-signals'),
+    apiFetch('/transactions/summary'),
+    apiFetch('/safeguards')
   ]).then(function(results) {
     loading.style.display = 'none';
     homeLoaded = true;
 
-    var profileResult = results[0] || {};
+    var failures = results
+      .map(function(result, index) {
+        return result.status === 'rejected'
+          ? ['profile', 'accounts', 'portfolio', 'ai-signals', 'transactions/summary', 'safeguards'][index]
+          : null;
+      })
+      .filter(Boolean);
+    var profileResult = results[0].status === 'fulfilled' ? results[0].value : {};
     var profile = profileResult.member || profileResult.data || {};
-    var accountsResult = results[1] || {};
+    var accountsResult = results[1].status === 'fulfilled' ? results[1].value : { data: [] };
     var accounts = accountsResult && accountsResult.data ? (Array.isArray(accountsResult.data) ? accountsResult.data : (accountsResult.data.accounts || [])) : [];
-    var portfolio = results[2] || {};
-    var signalsResult = results[3] || {};
+    var portfolio = results[2].status === 'fulfilled' ? results[2].value : {};
+    var signalsResult = results[3].status === 'fulfilled' ? results[3].value : { signals: [] };
     var signals = signalsResult.signals || signalsResult.data || [];
-    var txSummaryResult = results[4] || {};
+    var txSummaryResult = results[4].status === 'fulfilled' ? results[4].value : { data: {} };
     var txSummary = txSummaryResult.data || {};
-    var safeguards = results[5] || { guardian: { active: false }, events: [] };
+    var safeguards = results[5].status === 'fulfilled' ? results[5].value : { guardian: { active: false }, events: [] };
 
     renderHome(content, {
       profile: profile,
@@ -3175,7 +3221,8 @@ function loadHome() {
       portfolio: portfolio,
       signals: Array.isArray(signals) ? signals.slice(0, 2) : [],
       txSummary: txSummary,
-      safeguards: safeguards
+      safeguards: safeguards,
+      routeFailures: failures
     });
 
     if (safeguardPollTimer) clearInterval(safeguardPollTimer);
@@ -3201,6 +3248,11 @@ function renderHome(content, data) {
   var txSummary = data.txSummary || {};
   var safeguards = data.safeguards || { guardian: { active: false }, events: [] };
   var safeguardEvents = Array.isArray(safeguards.events) ? safeguards.events : [];
+  var routeFailures = Array.isArray(data.routeFailures) ? data.routeFailures : [];
+  var latestSignalUpdatedAt = signals.length ? signals.reduce(function(latest, signal) {
+    var candidate = signal.updatedAt || signal.createdAt || null;
+    return (!latest || (candidate && new Date(candidate) > new Date(latest))) ? candidate : latest;
+  }, null) : null;
   var totalBalance = portfolio.totalBalance;
   if (totalBalance == null && accounts.length) {
     totalBalance = accounts.reduce(function(sum, acct) { return sum + (Number(acct.balance) || 0); }, 0);
@@ -3253,7 +3305,23 @@ function renderHome(content, data) {
   hero.appendChild(title);
   hero.appendChild(copy);
   hero.appendChild(metrics);
+  var heroStamp = createUpdatedAtNote('Workspace refreshed', safeguards.updatedAt || latestSignalUpdatedAt || null);
+  if (heroStamp) hero.appendChild(heroStamp);
   content.appendChild(hero);
+
+  if (routeFailures.length) {
+    var feedCard = document.createElement('div');
+    feedCard.className = 'card';
+    var feedTitle = document.createElement('div');
+    feedTitle.className = 'home-section-title';
+    feedTitle.textContent = 'Live Data Warning';
+    var feedCopy = document.createElement('div');
+    feedCopy.className = 'signal-analysis';
+    feedCopy.textContent = 'Some live feeds failed to load: ' + routeFailures.join(', ') + '. The screen may be incomplete until the next refresh.';
+    feedCard.appendChild(feedTitle);
+    feedCard.appendChild(feedCopy);
+    content.appendChild(feedCard);
+  }
 
   if (safeguards.guardian && safeguards.guardian.active) {
     var guardianCard = document.createElement('div');
@@ -3448,6 +3516,11 @@ function loadSignals() {
       content.appendChild(nd);
       return;
     }
+    var stampCard = document.createElement('div');
+    stampCard.className = 'card';
+    var stamp = createUpdatedAtNote('Signals updated', signals[0].updatedAt || signals[0].createdAt || null);
+    if (stamp) stampCard.appendChild(stamp);
+    if (stampCard.children.length) content.appendChild(stampCard);
     signals.forEach(function(sig) { content.appendChild(renderSignalCard(sig)); });
 
     if (signalRefreshTimer) clearInterval(signalRefreshTimer);
@@ -3479,7 +3552,7 @@ function renderSignalCard(sig) {
   var header = document.createElement('div'); header.className = 'signal-header';
   var symEl = document.createElement('span'); symEl.className = 'signal-symbol'; symEl.textContent = sig.symbol;
   var badge = document.createElement('span');
-  badge.className = 'signal-badge ' + (sig.direction === 'BUY' ? 'buy' : 'sell');
+  badge.className = 'signal-badge ' + getSignalDirectionClass(sig.direction);
   badge.textContent = sig.direction;
   header.appendChild(symEl); header.appendChild(badge);
   card.appendChild(header);
@@ -3510,7 +3583,7 @@ function renderSignalCard(sig) {
 
   // Entry / SL / TP
   var levels = document.createElement('div'); levels.className = 'signal-levels';
-  [['Entry', sig.entry, 'entry'], ['Stop Loss', sig.sl, 'sl'], ['Take Profit', sig.tp, 'tp']].forEach(function(l) {
+  [['Entry', getSignalEntry(sig), 'entry'], ['Stop Loss', getSignalStopLoss(sig), 'sl'], ['Take Profit', getSignalTakeProfit(sig), 'tp']].forEach(function(l) {
     var lv = document.createElement('div'); lv.className = 'signal-level';
     var lbl = document.createElement('div'); lbl.className = 'lbl'; lbl.textContent = l[0];
     var val = document.createElement('div'); val.className = 'val ' + l[2]; val.textContent = l[1];
@@ -3522,7 +3595,7 @@ function renderSignalCard(sig) {
   var meta = document.createElement('div'); meta.className = 'signal-meta';
   var rr = document.createElement('div'); rr.className = 'signal-rr';
   rr.appendChild(document.createTextNode('R:R '));
-  var rrVal = document.createElement('span'); rrVal.textContent = sig.riskReward; rr.appendChild(rrVal);
+  var rrVal = document.createElement('span'); rrVal.textContent = getSignalRiskReward(sig); rr.appendChild(rrVal);
   var tf = document.createElement('span'); tf.className = 'signal-tf'; tf.textContent = sig.timeframe || 'H4';
   meta.appendChild(rr); meta.appendChild(tf);
   card.appendChild(meta);
@@ -3532,6 +3605,8 @@ function renderSignalCard(sig) {
     var analysis = document.createElement('div'); analysis.className = 'signal-analysis'; analysis.textContent = sig.analysis;
     card.appendChild(analysis);
   }
+  var signalStamp = createUpdatedAtNote('Updated', sig.updatedAt || sig.createdAt || null);
+  if (signalStamp) card.appendChild(signalStamp);
 
   // Expand arrow
   var arrow = document.createElement('div'); arrow.className = 'signal-expand-arrow'; arrow.textContent = '\u25BC';
@@ -3657,6 +3732,8 @@ function renderPortfolio(data) {
   gauge.appendChild(scoreDiv);
   healthCard.appendChild(gauge);
   content.appendChild(healthCard);
+  var portfolioStamp = createUpdatedAtNote('Portfolio analysis updated', advice.generatedAt || data.updatedAt || null);
+  if (portfolioStamp) content.appendChild(portfolioStamp);
 
   var stats = document.createElement('div'); stats.className = 'portfolio-summary';
   [
@@ -3800,6 +3877,8 @@ function loadJournal() {
     var entries = Array.isArray(data) ? data : (data.data || []);
     journalStatsData = statsResult && statsResult.data ? statsResult.data : null;
     journalData = entries;
+    var journalStamp = createUpdatedAtNote('Journal synced', (entries[0] && (entries[0].updatedAt || entries[0].closedAt || entries[0].openedAt)) || null);
+    if (journalStamp) content.appendChild(journalStamp);
     if (!entries.length) {
       var nd = document.createElement('div'); nd.className = 'no-data'; nd.style.paddingTop = '48px';
       var emoji = document.createElement('div'); emoji.style.cssText = 'font-size:40px;margin-bottom:12px;'; emoji.textContent = '\uD83D\uDCDD';
@@ -3997,22 +4076,69 @@ function loadAccount() {
   var loading = document.getElementById('account-loading');
   content.textContent = ''; loading.style.display = 'flex';
 
-  apiFetch('/accounts').catch(function() { return { data: [] }; }).then(function(accounts) {
+  Promise.all([
+    apiFetch('/accounts'),
+    apiFetch('/positions').catch(function() { return { positions: [] }; }),
+    apiFetch('/safeguards').catch(function() { return { guardian: { active: false }, events: [], updatedAt: null }; })
+  ]).then(function(results) {
     loading.style.display = 'none';
+    var accounts = results[0];
+    var positionsResult = results[1] || { positions: [] };
+    var safeguards = results[2] || { guardian: { active: false }, events: [], updatedAt: null };
     var acctArr = accounts && accounts.data ? (Array.isArray(accounts.data) ? accounts.data : (accounts.data.accounts || [])) : [];
+    var positions = Array.isArray(positionsResult.positions) ? positionsResult.positions : [];
+    var positionsByAccount = positions.reduce(function(map, position) {
+      var key = String(position.accountId || '');
+      map[key] = map[key] || [];
+      map[key].push(position);
+      return map;
+    }, {});
+
+    var accountStamp = createUpdatedAtNote('Account center refreshed', positionsResult.fetchedAt || safeguards.updatedAt || null);
+    if (accountStamp) content.appendChild(accountStamp);
+
+    if (safeguards.guardian && safeguards.guardian.active) {
+      var guardCard = document.createElement('div'); guardCard.className = 'card';
+      var guardTitle = document.createElement('h4'); guardTitle.textContent = 'Guardian Protection'; guardCard.appendChild(guardTitle);
+      var guardCopy = document.createElement('div'); guardCopy.className = 'signal-analysis';
+      guardCopy.textContent = 'Guardian mode is active for this Telegram session. Treat execution as blocked until margin recovers.';
+      guardCard.appendChild(guardCopy);
+      content.appendChild(guardCard);
+    }
 
     if (acctArr.length) {
       acctArr.forEach(function(acct) {
+        var accountId = String(acct.id || acct.mt5AccountId || acct.accountId || '');
+        var accountPositions = positionsByAccount[accountId] || [];
+        var margin = acct.margin != null ? Number(acct.margin) : 0;
+        var freeMargin = acct.freeMargin != null ? Number(acct.freeMargin) : 0;
+        var marginLevel = acct.marginLevel != null
+          ? Number(acct.marginLevel)
+          : (margin > 0 ? ((Number(acct.equity || acct.balance || 0) / margin) * 100) : 0);
         var c = document.createElement('div'); c.className = 'card';
         var badge = document.createElement('span'); badge.className = 'account-login-badge'; badge.textContent = 'MT5 #' + (acct.login || acct.accountId || 'N/A'); c.appendChild(badge);
         var bal = document.createElement('div'); bal.className = 'account-balance'; bal.textContent = '$' + Number(acct.balance||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); c.appendChild(bal);
         var bl = document.createElement('div'); bl.className = 'account-balance-label'; bl.textContent = '\u0E22\u0E2D\u0E14\u0E40\u0E07\u0E34\u0E19'; c.appendChild(bl);
-        [['Equity', acct.equity != null ? '$'+Number(acct.equity).toFixed(2) : '-'], ['Leverage', acct.leverage ? '1:'+acct.leverage : '-']].forEach(function(r) {
+        [
+          ['Equity', acct.equity != null ? '$'+Number(acct.equity).toFixed(2) : '-'],
+          ['Free Margin', freeMargin ? '$' + freeMargin.toFixed(2) : '-'],
+          ['Margin Level', marginLevel ? marginLevel.toFixed(1) + '%' : '-'],
+          ['Open Positions', String(accountPositions.length)],
+          ['Leverage', acct.leverage ? '1:'+acct.leverage : '-']
+        ].forEach(function(r) {
           var row = document.createElement('div'); row.className = 'account-row';
           var l = document.createElement('span'); l.className = 'label'; l.textContent = r[0];
           var v = document.createElement('span'); v.className = 'value'; v.textContent = r[1];
           row.appendChild(l); row.appendChild(v); c.appendChild(row);
         });
+        if (accountPositions.length) {
+          var summary = document.createElement('div');
+          summary.className = 'signal-analysis';
+          summary.textContent = 'Live symbols: ' + accountPositions.slice(0, 4).map(function(position) {
+            return position.symbol;
+          }).join(', ');
+          c.appendChild(summary);
+        }
         content.appendChild(c);
       });
     } else {
@@ -4138,8 +4264,8 @@ function buildDepositForm(container, ctx) {
       var payload = data.data || data;
       var message = 'Deposit submitted successfully!';
       if (payload.transactionId || payload.transactionRef) message += ' Ref: ' + (payload.transactionId || payload.transactionRef);
-      if (payload.qrCodeUrl) message += ' QR ready.';
-      showFormSuccess(container, message);
+      if (payload.qrCodeUrl) message += ' Scan the QR below to continue.';
+      showFormSuccess(container, message, payload);
     }).catch(function(e) {
       err.textContent = e.message || 'Failed';
       err.style.display = 'block';
@@ -4185,7 +4311,7 @@ function buildWithdrawForm(container, ctx) {
       var payload = data.data || data;
       var message = 'Withdrawal submitted successfully!';
       if (payload.transactionId || payload.reference || payload.id) message += ' Ref: ' + (payload.transactionId || payload.reference || payload.id);
-      showFormSuccess(container, message);
+      showFormSuccess(container, message, payload);
     }).catch(function(e) {
       err.textContent = e.message || 'Failed';
       err.style.display = 'block';
@@ -4232,7 +4358,7 @@ function buildTransferForm(container, ctx) {
       var payload = data.data || data;
       var message = 'Transfer completed!';
       if (payload.reference || payload.id || payload.transactionId) message += ' Ref: ' + (payload.reference || payload.id || payload.transactionId);
-      showFormSuccess(container, message);
+      showFormSuccess(container, message, payload);
     }).catch(function(e) {
       err.textContent = e.message || 'Failed';
       err.style.display = 'block';
@@ -4249,11 +4375,45 @@ function buildTransferForm(container, ctx) {
   container.appendChild(btn);
 }
 
-function showFormSuccess(container, msg) {
+function showFormSuccess(container, msg, details) {
   container.textContent = '';
   var s = document.createElement('div'); s.className = 'form-success'; s.textContent = msg; container.appendChild(s);
+  var payload = details || null;
+  if (payload) {
+    var meta = document.createElement('div');
+    meta.className = 'card';
+    meta.style.marginTop = '14px';
+    if (payload.transactionId || payload.transactionRef || payload.reference || payload.id) {
+      var ref = document.createElement('div');
+      ref.className = 'signal-analysis';
+      ref.textContent = 'Reference: ' + (payload.transactionId || payload.transactionRef || payload.reference || payload.id);
+      meta.appendChild(ref);
+    }
+    if (payload.instructions) {
+      var instructions = document.createElement('div');
+      instructions.className = 'signal-analysis';
+      instructions.textContent = Array.isArray(payload.instructions) ? payload.instructions.join(' ') : String(payload.instructions);
+      meta.appendChild(instructions);
+    }
+    if (payload.qrCodeUrl) {
+      var qrImg = document.createElement('img');
+      qrImg.src = payload.qrCodeUrl;
+      qrImg.alt = 'Payment QR';
+      qrImg.style.cssText = 'display:block;width:100%;max-width:260px;margin:12px auto;border-radius:12px;background:#fff;padding:8px;';
+      meta.appendChild(qrImg);
+    }
+    if (payload.paymentUrl || payload.checkoutUrl || payload.redirectUrl) {
+      var payBtn = document.createElement('button');
+      payBtn.className = 'form-submit gold';
+      payBtn.textContent = 'Open Payment Link';
+      payBtn.onclick = function() {
+        openExternal(payload.paymentUrl || payload.checkoutUrl || payload.redirectUrl);
+      };
+      meta.appendChild(payBtn);
+    }
+    if (meta.children.length) container.appendChild(meta);
+  }
   if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
-  setTimeout(function() { hideActionForm(); }, 2000);
 }
 
 function mkInput(label, id, type, ph) {
