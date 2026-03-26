@@ -608,8 +608,15 @@ class YBXAIEngine {
 
     // Sanitize user input — wrap with clear delimiters to prevent prompt injection
     const sanitizedUserMessage = `<user_input>\n${userMessage}\n</user_input>`;
+
+    // When we have price data but no AI signal, inject explicit directive for Entry/SL/TP
+    let tradeSetupDirective = "";
+    if (symbol && priceContext && !signalContext) {
+      tradeSetupDirective = `\n[MANDATORY TRADE SETUP DIRECTIVE]\nคุณมีราคา ${symbol} แล้ว — คุณต้องให้ Trade Setup ที่ชัดเจน:\n▸ Entry: ราคาที่แนะนำเข้า\n▸ SL: Stop Loss\n▸ TP1/TP2: Take Profit\n▸ R:R: Risk:Reward Ratio\nใช้ราคา Bid/Ask ที่ได้รับ ประกอบกับความรู้ TA ของคุณ (round numbers, Fibonacci levels, recent price action) เพื่อกำหนดจุด Entry/SL/TP ห้ามตอบโดยไม่มีตัวเลข Entry/SL/TP`;
+    }
+
     // Add user message to history (with enriched data)
-    const enrichedMessage = sanitizedUserMessage + priceContext + analysisContext + signalContext + marketOverviewContext;
+    const enrichedMessage = sanitizedUserMessage + priceContext + analysisContext + signalContext + tradeSetupDirective + marketOverviewContext;
     history.push({ role: "user", content: enrichedMessage });
     this._persist("ai:conversations", key, history);
     await this._trimHistory(history, platform, userId);
@@ -661,7 +668,7 @@ class YBXAIEngine {
         contents,
         config: {
           systemInstruction,
-          maxOutputTokens: 2200,
+          maxOutputTokens: 2800,
         },
       });
 
