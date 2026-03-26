@@ -1,0 +1,1698 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Jerry for LINE</title>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    :root {
+      --line-green: #06c755;
+      --ybx-yellow: #f1c96a;
+      --bg: #f4f7f2;
+      --ink: #122015;
+      --ink-soft: #5d695f;
+      --panel: #ffffff;
+      --panel-soft: #edf5ee;
+      --border: rgba(18, 32, 21, 0.08);
+      --shadow: 0 18px 40px rgba(18, 32, 21, 0.08);
+      --radius-xl: 28px;
+      --radius-lg: 22px;
+      --radius-md: 18px;
+      --radius-sm: 14px;
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    body {
+      font-family: "Manrope", "Avenir Next", "Trebuchet MS", sans-serif;
+      background:
+        radial-gradient(circle at top right, rgba(6, 199, 85, 0.14), transparent 30%),
+        linear-gradient(180deg, #f8fbf7 0%, #eef5ef 100%);
+      color: var(--ink);
+      min-height: 100vh;
+      min-height: 100dvh;
+    }
+
+    button, input, textarea { font: inherit; }
+    .hidden { display: none !important; }
+
+    .login-screen {
+      min-height: 100vh;
+      min-height: 100dvh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: calc(var(--safe-top) + 20px) 16px calc(var(--safe-bottom) + 20px);
+    }
+
+    .login-shell {
+      width: min(100%, 420px);
+      border-radius: 32px;
+      background: rgba(255,255,255,0.92);
+      box-shadow: var(--shadow);
+      border: 1px solid rgba(255,255,255,0.7);
+      overflow: hidden;
+    }
+
+    .login-hero {
+      padding: 24px;
+      background:
+        radial-gradient(circle at top right, rgba(6, 199, 85, 0.18), transparent 34%),
+        linear-gradient(135deg, rgba(241, 201, 106, 0.22), rgba(255,255,255,0.85));
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(6, 199, 85, 0.1);
+      color: var(--line-green);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 16px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .brand img {
+      width: 42px;
+      height: 42px;
+      border-radius: 14px;
+      background: rgba(255,255,255,0.7);
+      padding: 6px;
+    }
+
+    .brand h1 {
+      font-size: 24px;
+      line-height: 1.05;
+    }
+
+    .brand p {
+      margin-top: 6px;
+      color: var(--ink-soft);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .login-body { padding: 22px; }
+    .section-eyebrow {
+      margin-bottom: 12px;
+      color: var(--line-green);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .input {
+      width: 100%;
+      margin-bottom: 12px;
+      padding: 14px 15px;
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      background: #fff;
+      color: var(--ink);
+      outline: none;
+    }
+
+    .input:focus { border-color: rgba(6, 199, 85, 0.35); }
+
+    .btn {
+      width: 100%;
+      padding: 15px 16px;
+      border: none;
+      border-radius: 18px;
+      cursor: pointer;
+      font-weight: 800;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--line-green), #32d672);
+      color: white;
+    }
+
+    .btn-secondary {
+      background: rgba(18, 32, 21, 0.06);
+      color: var(--ink);
+    }
+
+    .login-error {
+      margin-top: 10px;
+      color: #d94141;
+      font-size: 12px;
+      text-align: center;
+      min-height: 16px;
+    }
+
+    .app {
+      display: none;
+      padding-bottom: 92px;
+    }
+
+    .app.visible { display: block; }
+
+    .header {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      padding: calc(var(--safe-top) + 14px) 16px 10px;
+      background: rgba(244, 247, 242, 0.92);
+      backdrop-filter: blur(18px);
+    }
+
+    .header-card {
+      border-radius: 26px;
+      background: rgba(255,255,255,0.92);
+      border: 1px solid rgba(255,255,255,0.7);
+      box-shadow: var(--shadow);
+      padding: 14px;
+    }
+
+    .header-top {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .header-mark {
+      width: 42px;
+      height: 42px;
+      border-radius: 15px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(6, 199, 85, 0.1);
+      flex-shrink: 0;
+    }
+
+    .header-mark img { width: 24px; height: 24px; }
+    .header-title { flex: 1; min-width: 0; }
+    .header-title span {
+      display: block;
+      color: var(--line-green);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+    .header-title h2 { font-size: 22px; line-height: 1.05; }
+    .header-title p {
+      margin-top: 5px;
+      color: var(--ink-soft);
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .profile-chip {
+      display: none;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: 18px;
+      background: var(--panel-soft);
+      margin-top: 10px;
+    }
+
+    .profile-chip.visible {
+      display: flex;
+    }
+
+    .profile-avatar {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      background: rgba(6, 199, 85, 0.12);
+      object-fit: cover;
+      flex-shrink: 0;
+    }
+
+    .profile-copy strong {
+      display: block;
+      font-size: 13px;
+      line-height: 1.2;
+    }
+
+    .profile-copy span {
+      display: block;
+      margin-top: 3px;
+      color: var(--ink-soft);
+      font-size: 11px;
+    }
+
+    .header-action {
+      width: 42px;
+      height: 42px;
+      border-radius: 15px;
+      border: none;
+      background: rgba(18, 32, 21, 0.06);
+      color: var(--ink);
+      font-size: 18px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    .glance {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .glance-card {
+      padding: 12px;
+      border-radius: 18px;
+      background: var(--panel-soft);
+    }
+
+    .glance-card .label {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--ink-soft);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .glance-card .value {
+      display: block;
+      font-size: 14px;
+      font-weight: 800;
+      line-height: 1.35;
+    }
+
+    .content {
+      padding: 16px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .screen { display: none; }
+    .screen.active { display: grid; gap: 14px; }
+
+    .hero {
+      padding: 20px;
+      border-radius: var(--radius-xl);
+      background: linear-gradient(135deg, rgba(6,199,85,0.12), rgba(255,255,255,0.92));
+      border: 1px solid rgba(6, 199, 85, 0.14);
+      box-shadow: var(--shadow);
+    }
+
+    .hero h3 { font-size: 26px; line-height: 1.05; margin-bottom: 8px; }
+    .hero p { color: var(--ink-soft); font-size: 14px; line-height: 1.65; }
+
+    .metrics,
+    .quick-grid,
+    .signal-grid,
+    .account-grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    .metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .quick-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+    .card {
+      background: var(--panel);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow);
+      border: 1px solid rgba(255,255,255,0.7);
+      padding: 18px;
+    }
+
+    .metric {
+      padding: 14px;
+      border-radius: var(--radius-md);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      border: 1px solid rgba(255,255,255,0.7);
+    }
+
+    .metric .label, .card-title {
+      color: var(--line-green);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .metric .label { display: block; margin-bottom: 8px; }
+    .metric .value { font-size: 18px; font-weight: 800; }
+
+    .quick-action {
+      padding: 16px;
+      border-radius: var(--radius-md);
+      border: none;
+      text-align: left;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      cursor: pointer;
+    }
+
+    .quick-action strong {
+      display: block;
+      margin-bottom: 5px;
+      font-size: 14px;
+    }
+
+    .quick-action span {
+      color: var(--ink-soft);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .stack { display: grid; gap: 10px; }
+    .status-row, .signal-item, .support-item, .activity-item {
+      padding: 14px;
+      border-radius: 16px;
+      background: var(--panel-soft);
+    }
+
+    .status-row strong, .signal-item strong, .support-item strong, .activity-item strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 14px;
+    }
+
+    .status-row p, .signal-item p, .support-item p, .activity-item p, .account-row p {
+      color: var(--ink-soft);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .section-split,
+    .activity-grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    .section-split {
+      grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+    }
+
+    .activity-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .activity-item {
+      position: relative;
+      overflow: hidden;
+    }
+
+    .activity-item::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 14px;
+      bottom: 14px;
+      width: 4px;
+      border-radius: 999px;
+      background: rgba(6, 199, 85, 0.16);
+    }
+
+    .activity-item.warn::before {
+      background: rgba(241, 201, 106, 0.5);
+    }
+
+    .activity-item.risk::before {
+      background: rgba(217, 65, 65, 0.5);
+    }
+
+    .activity-item > * {
+      margin-left: 10px;
+    }
+
+    .activity-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .activity-meta span {
+      color: var(--ink-soft);
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .link-cta {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+      color: var(--line-green);
+      font-size: 12px;
+      font-weight: 800;
+      cursor: pointer;
+      text-decoration: none;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 5px 9px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 8px;
+    }
+
+    .badge.good { background: rgba(6,199,85,0.12); color: var(--line-green); }
+    .badge.warn { background: rgba(241,201,106,0.18); color: #8a6500; }
+    .badge.risk { background: rgba(217,65,65,0.12); color: #d94141; }
+    .badge.buy { background: rgba(6,199,85,0.12); color: var(--line-green); }
+    .badge.sell { background: rgba(217,65,65,0.12); color: #d94141; }
+
+    .support-form textarea {
+      width: 100%;
+      min-height: 110px;
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      background: white;
+      resize: vertical;
+      outline: none;
+      margin-bottom: 12px;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .tool-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 11px 14px;
+      border: none;
+      border-radius: 14px;
+      background: rgba(18, 32, 21, 0.06);
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .tool-btn.primary {
+      background: rgba(6, 199, 85, 0.12);
+      color: var(--line-green);
+    }
+
+    .account-row {
+      padding: 14px;
+      border-radius: 16px;
+      background: var(--panel-soft);
+    }
+
+    .account-row-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 6px;
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .chat-fab {
+      position: fixed;
+      right: 16px;
+      bottom: calc(var(--safe-bottom) + 88px);
+      width: 58px;
+      height: 58px;
+      border-radius: 20px;
+      border: none;
+      background: linear-gradient(135deg, var(--line-green), #2cd66d);
+      color: white;
+      font-size: 24px;
+      box-shadow: var(--shadow);
+      cursor: pointer;
+      z-index: 25;
+    }
+
+    .nav {
+      position: fixed;
+      left: 12px;
+      right: 12px;
+      bottom: max(10px, calc(var(--safe-bottom) + 10px));
+      display: none;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px;
+      padding: 8px;
+      border-radius: 24px;
+      background: rgba(255,255,255,0.92);
+      box-shadow: var(--shadow);
+      z-index: 30;
+    }
+
+    .nav.visible { display: grid; }
+
+    .nav-item {
+      position: relative;
+      border: none;
+      background: transparent;
+      border-radius: 18px;
+      padding: 10px 6px;
+      color: var(--ink-soft);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+
+    .nav-item.active {
+      background: rgba(6,199,85,0.1);
+      color: var(--line-green);
+    }
+
+    .nav-item span {
+      display: block;
+      font-size: 18px;
+      margin-bottom: 3px;
+    }
+
+    .nav-badge {
+      position: absolute;
+      top: 6px;
+      right: 8px;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      border-radius: 999px;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: var(--line-green);
+      color: white;
+      font-size: 10px;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .nav-badge.visible {
+      display: inline-flex;
+    }
+
+    .overlay {
+      position: fixed;
+      inset: 0;
+      display: none;
+      background: rgba(18, 32, 21, 0.32);
+      z-index: 40;
+      align-items: flex-end;
+    }
+
+    .overlay.open { display: flex; }
+
+    .overlay.centered {
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+    }
+
+    .overlay.centered .sheet {
+      max-width: 460px;
+      border-radius: 28px;
+      max-height: none;
+    }
+
+    .sheet {
+      width: 100%;
+      max-height: 88vh;
+      max-height: 88dvh;
+      overflow-y: auto;
+      padding: 18px;
+      border-radius: 28px 28px 0 0;
+      background: #fff;
+    }
+
+    .sheet-head {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .sheet-head h4 { flex: 1; font-size: 20px; }
+    .sheet-close {
+      width: 40px;
+      height: 40px;
+      border-radius: 14px;
+      border: none;
+      background: rgba(18,32,21,0.06);
+      cursor: pointer;
+    }
+
+    .chat-log {
+      display: grid;
+      gap: 10px;
+      margin-bottom: 14px;
+      max-height: 48vh;
+      overflow-y: auto;
+    }
+
+    .bubble {
+      max-width: 86%;
+      padding: 12px 14px;
+      border-radius: 16px;
+      font-size: 13px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+
+    .bubble.user {
+      justify-self: end;
+      background: var(--line-green);
+      color: white;
+    }
+
+    .bubble.assistant {
+      background: var(--panel-soft);
+    }
+
+    .chat-row {
+      display: flex;
+      gap: 8px;
+    }
+
+    .chat-row input {
+      flex: 1;
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      outline: none;
+    }
+
+    .cta-banner {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 16px;
+      border-radius: 18px;
+      background: linear-gradient(135deg, rgba(6,199,85,0.12), rgba(241,201,106,0.12));
+      margin-top: 14px;
+    }
+
+    .cta-banner strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 14px;
+    }
+
+    .cta-banner p {
+      color: var(--ink-soft);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .cta-banner .tool-btn {
+      flex-shrink: 0;
+    }
+
+    .loading, .empty, .error {
+      padding: 20px 16px;
+      border-radius: 18px;
+      text-align: center;
+      font-size: 13px;
+    }
+
+    .loading { background: var(--panel); box-shadow: var(--shadow); }
+    .empty { background: rgba(255,255,255,0.65); color: var(--ink-soft); }
+    .error { background: rgba(217,65,65,0.08); color: #d94141; }
+
+    @media (max-width: 520px) {
+      .metrics, .quick-grid { grid-template-columns: 1fr; }
+      .glance { grid-template-columns: 1fr; }
+      .section-split, .activity-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="login-screen" id="loginScreen">
+    <div class="login-shell">
+      <div class="login-hero">
+        <div class="pill">LINE Companion</div>
+        <div class="brand">
+          <img src="../webapp/logo.webp" alt="YBX">
+          <div>
+            <h1>Jerry for LINE</h1>
+            <p>เวอร์ชันสำหรับ LINE เน้น overview, alerts, signals, support และ handoff ไป Telegram เมื่อถึงขั้น execution</p>
+          </div>
+        </div>
+      </div>
+      <div class="login-body">
+        <div class="section-eyebrow">Member Login</div>
+        <input class="input" id="emailInput" type="email" placeholder="อีเมล">
+        <input class="input" id="passwordInput" type="password" placeholder="รหัสผ่าน" onkeydown="if(event.key==='Enter')login()">
+        <button class="btn btn-primary" id="loginBtn" onclick="login()">เข้าสู่ระบบ</button>
+        <div class="login-error" id="loginError"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="app" id="app">
+    <div class="header">
+      <div class="header-card">
+        <div class="header-top">
+          <div class="header-mark"><img src="../webapp/logo.webp" alt="YBX"></div>
+          <div class="header-title">
+            <span>LINE Desk</span>
+            <h2 id="headerTitle">Jerry Home</h2>
+            <p id="headerSubtitle">Overview, nudges, and support</p>
+          </div>
+          <button class="header-action" onclick="refreshCurrentScreen()">↻</button>
+        </div>
+        <div class="glance">
+          <div class="glance-card">
+            <span class="label">Member</span>
+            <span class="value" id="glanceMember">Connected</span>
+          </div>
+          <div class="glance-card">
+            <span class="label">Best Use</span>
+            <span class="value" id="glanceMode">Overview and handoff</span>
+          </div>
+        </div>
+        <div class="profile-chip" id="profileChip">
+          <img class="profile-avatar" id="profileAvatar" alt="LINE profile">
+          <div class="profile-copy">
+            <strong id="profileName">LINE User</strong>
+            <span id="profileMeta">Connected in LINE</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="screen active" id="screen-home"></div>
+      <div class="screen" id="screen-activity"></div>
+      <div class="screen" id="screen-signals"></div>
+      <div class="screen" id="screen-account"></div>
+      <div class="screen" id="screen-support"></div>
+    </div>
+  </div>
+
+  <button class="chat-fab hidden" id="chatFab" onclick="openChat()">✦</button>
+
+  <div class="nav" id="nav">
+    <button class="nav-item active" data-screen="home" onclick="switchScreen('home')"><span>⌂</span>Home</button>
+    <button class="nav-item" data-screen="activity" onclick="switchScreen('activity')"><span>◷</span>Activity<em class="nav-badge" id="activityBadge">0</em></button>
+    <button class="nav-item" data-screen="signals" onclick="switchScreen('signals')"><span>◔</span>Signals</button>
+    <button class="nav-item" data-screen="account" onclick="switchScreen('account')"><span>▣</span>Account</button>
+    <button class="nav-item" data-screen="support" onclick="switchScreen('support')"><span>✉</span>Support<em class="nav-badge" id="supportBadge">0</em></button>
+  </div>
+
+  <div class="overlay" id="chatOverlay">
+    <div class="sheet">
+      <div class="sheet-head">
+        <h4>Jerry Chat</h4>
+        <button class="sheet-close" onclick="closeChat()">×</button>
+      </div>
+      <div class="chat-log" id="chatLog"></div>
+      <div class="chat-row">
+        <input id="chatInput" type="text" placeholder="ถาม Jerry..." onkeydown="if(event.key==='Enter')sendChat()">
+        <button class="btn btn-primary" style="width:auto;padding:0 18px;" onclick="sendChat()">ส่ง</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay centered" id="onboardingOverlay">
+    <div class="sheet">
+      <div class="sheet-head">
+        <h4>How To Use LINE + Telegram</h4>
+        <button class="sheet-close" onclick="dismissOnboarding('close')">×</button>
+      </div>
+      <div class="stack">
+        <div class="support-item">
+          <strong>LINE is your tester desk</strong>
+          <p>ใช้ LINE เพื่อดู overview, รับ alert, อ่าน signals, คุยกับ support และเตรียมข้อมูลก่อนตัดสินใจ</p>
+        </div>
+        <div class="support-item">
+          <strong>Telegram is your power desk</strong>
+          <p>เมื่อคุณต้องการ execution, position management, หรือ Jerry workflow ที่ลึกกว่า ให้ไปต่อใน Telegram</p>
+        </div>
+        <div class="support-item">
+          <strong>Best flow</strong>
+          <p>Review on LINE → decide on Telegram → manage risk on Telegram</p>
+        </div>
+        <div class="toolbar">
+          <button class="tool-btn primary" onclick="dismissOnboarding('telegram'); openTelegram('onboarding')">Open Telegram</button>
+          <button class="tool-btn" onclick="dismissOnboarding('continue')">Continue In LINE</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    var LINEAPP_API = "/api/lineapp";
+    var AUTH_API = "/api/auth";
+    var currentScreen = "home";
+    var sessionToken = localStorage.getItem("ybx_lineapp_session") || "";
+    var cachedSession = null;
+    var screenLoaded = { home: false, activity: false, signals: false, account: false, support: false };
+    var liffReady = false;
+    var appConfig = { telegramUrl: "", telegramUsername: "", lineLiffId: "" };
+    var liffProfile = null;
+    var activitySummary = { activityCount: 0, supportCount: 0 };
+    var onboardingKey = "ybx_lineapp_onboarding_v1";
+    var trackedViews = {};
+
+    var SCREEN_META = {
+      home: { title: "Jerry Home", subtitle: "Overview, nudges, and support" },
+      activity: { title: "Activity Center", subtitle: "Notifications, funding state, and support history" },
+      signals: { title: "Signal Watch", subtitle: "Latest setups and Jerry context" },
+      account: { title: "Account Snapshot", subtitle: "Balances, health, and funding view" },
+      support: { title: "Support Desk", subtitle: "Tickets, notifications, and next help steps" }
+    };
+
+    function init() {
+      loadConfig().finally(function() {
+        initLiff();
+        checkSession();
+      });
+    }
+
+    function loadConfig() {
+      return fetch(LINEAPP_API + "/config")
+        .then(function(res) { return res.ok ? res.json() : {}; })
+        .then(function(data) { appConfig = data || appConfig; })
+        .catch(function() {});
+    }
+
+    function initLiff() {
+      if (!window.liff || !window.liff.init || !window.liff.isInClient) {
+        return;
+      }
+      var liffId = appConfig.lineLiffId || "";
+      if (!liffId) {
+        return;
+      }
+      window.liff.init({ liffId: liffId }).then(function() {
+        liffReady = true;
+        if (window.liff.isLoggedIn && window.liff.isLoggedIn() && window.liff.getProfile) {
+          return window.liff.getProfile().then(function(profile) {
+            liffProfile = profile;
+            updateProfileChip();
+          }).catch(function() {});
+        }
+      }).catch(function() {});
+    }
+
+    function authHeaders() {
+      return sessionToken ? { Authorization: "Bearer " + sessionToken } : {};
+    }
+
+    function api(path, opts) {
+      var headers = Object.assign({}, authHeaders(), (opts && opts.headers) || {});
+      var options = { method: (opts && opts.method) || "GET", headers: headers };
+      if (opts && opts.body) {
+        options.body = JSON.stringify(opts.body);
+        headers["Content-Type"] = "application/json";
+      }
+      return fetch(path, options).then(function(res) {
+        if (!res.ok) {
+          return res.json().catch(function() { return {}; }).then(function(body) {
+            throw new Error(body.error || ("API " + res.status));
+          });
+        }
+        return res.json();
+      });
+    }
+
+    function setLoginError(text) {
+      document.getElementById("loginError").textContent = text || "";
+    }
+
+    function showLogin() {
+      document.getElementById("loginScreen").classList.remove("hidden");
+      document.getElementById("app").classList.remove("visible");
+      document.getElementById("nav").classList.remove("visible");
+      document.getElementById("chatFab").classList.add("hidden");
+    }
+
+    function showApp() {
+      document.getElementById("loginScreen").classList.add("hidden");
+      document.getElementById("app").classList.add("visible");
+      document.getElementById("nav").classList.add("visible");
+      document.getElementById("chatFab").classList.remove("hidden");
+      switchScreen(currentScreen);
+      maybeShowOnboarding();
+    }
+
+    function checkSession() {
+      if (!sessionToken) {
+        showLogin();
+        return;
+      }
+      api(LINEAPP_API + "/session").then(function(data) {
+        if (!data.authenticated) {
+          sessionToken = "";
+          localStorage.removeItem("ybx_lineapp_session");
+          showLogin();
+          return;
+        }
+        cachedSession = data;
+        updateGlance(data.member);
+        showApp();
+      }).catch(function() {
+        sessionToken = "";
+        localStorage.removeItem("ybx_lineapp_session");
+        showLogin();
+      });
+    }
+
+    function updateGlance(member) {
+      document.getElementById("glanceMember").textContent = (member && (member.name || member.email)) || "Connected";
+      updateProfileChip(member);
+    }
+
+    function updateProfileChip(member) {
+      var chip = document.getElementById("profileChip");
+      var nameEl = document.getElementById("profileName");
+      var metaEl = document.getElementById("profileMeta");
+      var avatarEl = document.getElementById("profileAvatar");
+      var displayName = (liffProfile && liffProfile.displayName) || (member && member.name) || (member && member.email);
+      if (!displayName) {
+        chip.classList.remove("visible");
+        return;
+      }
+      chip.classList.add("visible");
+      nameEl.textContent = displayName;
+      metaEl.textContent = liffProfile && liffProfile.userId ? "LIFF client connected" : "Member session active";
+      if (liffProfile && liffProfile.pictureUrl) {
+        avatarEl.src = liffProfile.pictureUrl;
+      } else {
+        avatarEl.removeAttribute("src");
+      }
+    }
+
+    function updateActivityBadges() {
+      var activityBadge = document.getElementById("activityBadge");
+      var supportBadge = document.getElementById("supportBadge");
+      var activityCount = Number(activitySummary.activityCount || 0);
+      var supportCount = Number(activitySummary.supportCount || 0);
+      activityBadge.textContent = String(activityCount > 9 ? "9+" : activityCount);
+      supportBadge.textContent = String(supportCount > 9 ? "9+" : supportCount);
+      activityBadge.classList.toggle("visible", activityCount > 0);
+      supportBadge.classList.toggle("visible", supportCount > 0);
+    }
+
+    function setActivitySummary(notifications, tickets, summary) {
+      var pendingCount = (summary.pendingDepositsCount || 0) + (summary.pendingWithdrawalsCount || 0);
+      activitySummary = {
+        activityCount: pendingCount + (notifications || []).length + (tickets || []).length,
+        supportCount: (tickets || []).length
+      };
+      updateActivityBadges();
+    }
+
+    function login() {
+      var email = document.getElementById("emailInput").value.trim();
+      var password = document.getElementById("passwordInput").value;
+      var btn = document.getElementById("loginBtn");
+      if (!email || !password) {
+        setLoginError("กรุณากรอกอีเมลและรหัสผ่าน");
+        return;
+      }
+      setLoginError("");
+      btn.disabled = true;
+      btn.textContent = "กำลังเข้าสู่ระบบ...";
+      api(AUTH_API + "/login", { method: "POST", body: { email: email, password: password } })
+        .then(function(data) {
+          sessionToken = data.sessionToken;
+          localStorage.setItem("ybx_lineapp_session", sessionToken);
+          screenLoaded = { home: false, activity: false, signals: false, account: false, support: false };
+          return api(LINEAPP_API + "/session");
+        })
+        .then(function(data) {
+          cachedSession = data;
+          updateGlance(data.member);
+          showApp();
+        })
+        .catch(function(err) {
+          setLoginError(err.message || "เข้าสู่ระบบไม่สำเร็จ");
+        })
+        .finally(function() {
+          btn.disabled = false;
+          btn.textContent = "เข้าสู่ระบบ";
+        });
+    }
+
+    function logout() {
+      api(AUTH_API + "/logout", { method: "POST" }).catch(function() {}).finally(function() {
+        sessionToken = "";
+        cachedSession = null;
+        screenLoaded = { home: false, activity: false, signals: false, account: false, support: false };
+        localStorage.removeItem("ybx_lineapp_session");
+        showLogin();
+      });
+    }
+
+    function setHeader(screen) {
+      var meta = SCREEN_META[screen] || SCREEN_META.home;
+      document.getElementById("headerTitle").textContent = meta.title;
+      document.getElementById("headerSubtitle").textContent = meta.subtitle;
+      document.getElementById("glanceMode").textContent = screen === "home" ? "Overview and handoff" : meta.title;
+    }
+
+    function switchScreen(screen) {
+      currentScreen = screen;
+      setHeader(screen);
+      document.querySelectorAll(".nav-item").forEach(function(item) {
+        item.classList.toggle("active", item.dataset.screen === screen);
+      });
+      document.querySelectorAll(".screen").forEach(function(node) {
+        node.classList.toggle("active", node.id === "screen-" + screen);
+      });
+      if (!screenLoaded[screen]) {
+        if (screen === "home") loadHome();
+        if (screen === "activity") loadActivity();
+        if (screen === "signals") loadSignals();
+        if (screen === "account") loadAccount();
+        if (screen === "support") loadSupport();
+      }
+      trackScreenView(screen);
+    }
+
+    function refreshCurrentScreen() {
+      screenLoaded[currentScreen] = false;
+      switchScreen(currentScreen);
+    }
+
+    function formatMoney(value) {
+      return "$" + Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function healthBadge(score) {
+      if (score >= 70) return { label: "Healthy", className: "good" };
+      if (score >= 40) return { label: "Watch", className: "warn" };
+      return { label: "Risk", className: "risk" };
+    }
+
+    function normalizeListPayload(result) {
+      if (Array.isArray(result)) return result;
+      if (result && Array.isArray(result.data)) return result.data;
+      if (result && result.data && Array.isArray(result.data.data)) return result.data.data;
+      return [];
+    }
+
+    function extractActivityFeed(notifications, tickets, summary) {
+      var items = [];
+      (notifications || []).slice(0, 3).forEach(function(item) {
+        items.push({
+          type: "notification",
+          title: item.title || "Notification",
+          body: item.message || item.description || "New member update",
+          stamp: item.createdAt || item.date || "",
+          tone: "good"
+        });
+      });
+      (tickets || []).slice(0, 2).forEach(function(ticket) {
+        items.push({
+          type: "ticket",
+          title: ticket.subject || "Support ticket",
+          body: "Status: " + (ticket.status || "Open"),
+          stamp: ticket.createdAt || "",
+          tone: (ticket.status || "").toLowerCase().includes("pending") ? "warn" : "good"
+        });
+      });
+      var pendingCount = (summary.pendingDepositsCount || 0) + (summary.pendingWithdrawalsCount || 0);
+      if (pendingCount) {
+        items.unshift({
+          type: "funding",
+          title: "Funding requests pending",
+          body: pendingCount + " request(s) still waiting for update",
+          stamp: "",
+          tone: "warn"
+        });
+      }
+      return items.slice(0, 5);
+    }
+
+    function extractFullActivityFeed(notifications, tickets, summary) {
+      var items = [];
+      var pendingCount = (summary.pendingDepositsCount || 0) + (summary.pendingWithdrawalsCount || 0);
+      if (pendingCount) {
+        items.push({
+          type: "funding",
+          title: "Funding requests pending",
+          body: pendingCount + " request(s) still waiting for update",
+          stamp: "",
+          tone: "warn"
+        });
+      }
+      (notifications || []).forEach(function(item) {
+        items.push({
+          type: "notification",
+          title: item.title || "Notification",
+          body: item.message || item.description || "New member update",
+          stamp: item.createdAt || item.date || "",
+          tone: "good"
+        });
+      });
+      (tickets || []).forEach(function(ticket) {
+        items.push({
+          type: "ticket",
+          title: ticket.subject || "Support ticket",
+          body: "Status: " + (ticket.status || "Open"),
+          stamp: ticket.createdAt || "",
+          tone: (ticket.status || "").toLowerCase().includes("pending") ? "warn" : "good"
+        });
+      });
+      return items;
+    }
+
+    function formatStamp(value) {
+      if (!value) return "Recent";
+      var date = new Date(value);
+      if (isNaN(date.getTime())) return "Recent";
+      return date.toLocaleDateString("th-TH", { day: "numeric", month: "short" });
+    }
+
+    function renderLoading(container, text) {
+      container.innerHTML = '<div class="loading">' + text + '</div>';
+    }
+
+    function renderError(container, text) {
+      container.innerHTML = '<div class="error">' + text + '</div>';
+    }
+
+    function trackEvent(eventName, screen, payload) {
+      if (!sessionToken) return Promise.resolve();
+      return api(LINEAPP_API + "/events", {
+        method: "POST",
+        body: {
+          eventName: eventName,
+          screen: screen || currentScreen,
+          payload: payload || {}
+        }
+      }).catch(function() {});
+    }
+
+    function trackScreenView(screen) {
+      if (trackedViews[screen]) return;
+      trackedViews[screen] = true;
+      trackEvent("screen_view", screen, { inLiff: liffReady });
+    }
+
+    function maybeShowOnboarding() {
+      if (localStorage.getItem(onboardingKey)) return;
+      document.getElementById("onboardingOverlay").classList.add("open");
+      trackEvent("onboarding_shown", currentScreen, { inLiff: liffReady });
+    }
+
+    function dismissOnboarding(action) {
+      localStorage.setItem(onboardingKey, "1");
+      document.getElementById("onboardingOverlay").classList.remove("open");
+      trackEvent("onboarding_dismissed", currentScreen, { action: action || "continue" });
+    }
+
+    function loadHome() {
+      var el = document.getElementById("screen-home");
+      renderLoading(el, "Loading your LINE workspace...");
+      Promise.all([
+        api(LINEAPP_API + "/profile"),
+        api(LINEAPP_API + "/portfolio"),
+        api(LINEAPP_API + "/ai-signals"),
+        api(LINEAPP_API + "/transactions/summary"),
+        api(LINEAPP_API + "/notifications").catch(function() { return []; }),
+        api(LINEAPP_API + "/support").catch(function() { return []; })
+      ]).then(function(results) {
+        screenLoaded.home = true;
+        var profile = results[0] || {};
+        var portfolio = results[1] || {};
+        var signals = (results[2] && results[2].signals) || [];
+        var summary = (results[3] && results[3].data) || {};
+        var notifications = normalizeListPayload(results[4]);
+        var tickets = normalizeListPayload(results[5]);
+        var activityFeed = extractActivityFeed(notifications, tickets, summary);
+        setActivitySummary(notifications, tickets, summary);
+        var badge = healthBadge(Number(portfolio.healthScore || 0));
+        el.innerHTML = "";
+
+        var hero = document.createElement("div");
+        hero.className = "hero";
+        hero.innerHTML =
+          "<div class='pill'>LINE Home</div>" +
+          "<h3>สวัสดี " + ((profile.member && profile.member.name) || "Trader") + "</h3>" +
+          "<p>เวอร์ชัน LINE นี้ออกแบบมาให้คุณเห็นภาพรวม, รับสัญญาณเตือน, เช็กพอร์ต และไปต่อ Telegram เมื่อถึงขั้น execution</p>";
+        var heroCta = document.createElement("div");
+        heroCta.className = "cta-banner";
+        heroCta.innerHTML =
+          "<div><strong>Ready to trade?</strong><p>เมื่อคุณพร้อมจะลงมือจริง ให้ย้ายไป Telegram เพื่อ execution, position actions, และ Jerry workflow ที่ครบกว่า</p></div>";
+        heroCta.appendChild(makeToolButton("Open Telegram", function() { openTelegram("home_hero"); }, true));
+        el.appendChild(hero);
+        el.appendChild(heroCta);
+
+        var metrics = document.createElement("div");
+        metrics.className = "metrics";
+        [
+          ["Balance", formatMoney(portfolio.totalBalance)],
+          ["Free Margin", formatMoney(portfolio.freeMargin)],
+          ["Open Positions", String((portfolio.positions || []).length)]
+        ].forEach(function(item) {
+          var node = document.createElement("div");
+          node.className = "metric";
+          node.innerHTML = "<span class='label'>" + item[0] + "</span><span class='value'>" + item[1] + "</span>";
+          metrics.appendChild(node);
+        });
+        el.appendChild(metrics);
+
+        var quick = document.createElement("div");
+        quick.className = "quick-grid";
+        quick.appendChild(makeAction("Ask Jerry", "ถามตลาดหรือพอร์ตจากหน้า LINE นี้", openChat));
+        quick.appendChild(makeAction("View Signals", "เปิด signal watch ล่าสุดจาก Jerry", function() { switchScreen("signals"); }));
+        quick.appendChild(makeAction("Account Snapshot", "ดูยอดเงิน บัญชี และ funding summary", function() { switchScreen("account"); }));
+        quick.appendChild(makeAction("Go Telegram", "ไป Telegram สำหรับ execution และ position actions", function() { openTelegram("home_quick_action"); }));
+        el.appendChild(quick);
+
+        var status = document.createElement("div");
+        status.className = "card";
+        status.innerHTML = "<div class='card-title'>Attention</div>";
+        var stack = document.createElement("div");
+        stack.className = "stack";
+        stack.appendChild(makeStatus("Portfolio Health", badge, "Health score " + Number(portfolio.healthScore || 0) + " with equity " + formatMoney(portfolio.totalEquity) + "."));
+        stack.appendChild(makeStatus("Funding Requests", ((summary.pendingDepositsCount || 0) + (summary.pendingWithdrawalsCount || 0)) ? { label: "Pending", className: "warn" } : { label: "Clear", className: "good" }, ((summary.pendingDepositsCount || 0) + (summary.pendingWithdrawalsCount || 0)) ? "มีรายการ funding ที่ยังรอดำเนินการ" : "ไม่มีรายการฝากหรือถอนที่ค้างอยู่"));
+        stack.appendChild(makeStatus("Best Channel", { label: "Telegram", className: "good" }, "ใช้ LINE สำหรับ overview และ support, แล้วใช้ Telegram สำหรับ execution ขั้นสูง"));
+        status.appendChild(stack);
+        var signalCard = document.createElement("div");
+        signalCard.className = "card";
+        signalCard.innerHTML = "<div class='card-title'>Top Setups</div>";
+        var signalStack = document.createElement("div");
+        signalStack.className = "stack";
+        if (signals.length) {
+          signals.slice(0, 2).forEach(function(sig) { signalStack.appendChild(makeSignal(sig, false, "home_signal")); });
+        } else {
+          signalStack.innerHTML = "<div class='empty'>ยังไม่มี setup เด่นในรอบนี้</div>";
+        }
+        var signalLink = document.createElement("a");
+        signalLink.className = "link-cta";
+        signalLink.textContent = "Open full signal watch →";
+        signalLink.onclick = function() { switchScreen("signals"); };
+        signalCard.appendChild(signalStack);
+        signalCard.appendChild(signalLink);
+
+        var split = document.createElement("div");
+        split.className = "section-split";
+        split.appendChild(status);
+        split.appendChild(signalCard);
+        el.appendChild(split);
+
+        var activityCard = document.createElement("div");
+        activityCard.className = "card";
+        activityCard.innerHTML = "<div class='card-title'>Activity Center</div>";
+        var activityGrid = document.createElement("div");
+        activityGrid.className = "activity-grid";
+        if (activityFeed.length) {
+          activityFeed.forEach(function(item) { activityGrid.appendChild(makeActivityItem(item)); });
+        } else {
+          activityGrid.innerHTML = "<div class='empty'>No new activity yet</div>";
+        }
+        var activityLink = document.createElement("a");
+        activityLink.className = "link-cta";
+        activityLink.textContent = "Open support and notifications →";
+        activityLink.onclick = function() { switchScreen("support"); };
+        activityCard.appendChild(activityGrid);
+        activityCard.appendChild(activityLink);
+        el.appendChild(activityCard);
+      }).catch(function(err) {
+        renderError(el, err.message || "Failed to load home");
+      });
+    }
+
+    function loadSignals() {
+      var el = document.getElementById("screen-signals");
+      renderLoading(el, "Loading signals...");
+      api(LINEAPP_API + "/ai-signals").then(function(data) {
+        screenLoaded.signals = true;
+        var signals = data.signals || [];
+        el.innerHTML = "";
+        if (!signals.length) {
+          el.innerHTML = "<div class='empty'>ยังไม่มีสัญญาณในตอนนี้</div>";
+          return;
+        }
+        var card = document.createElement("div");
+        card.className = "card";
+        card.innerHTML = "<div class='card-title'>Latest Signals</div>";
+        var grid = document.createElement("div");
+        grid.className = "signal-grid";
+        signals.forEach(function(sig) { grid.appendChild(makeSignal(sig, true)); });
+        card.appendChild(grid);
+        el.appendChild(card);
+      }).catch(function(err) {
+        renderError(el, err.message || "Failed to load signals");
+      });
+    }
+
+    function loadActivity() {
+      var el = document.getElementById("screen-activity");
+      renderLoading(el, "Loading activity...");
+      Promise.all([
+        api(LINEAPP_API + "/notifications").catch(function() { return []; }),
+        api(LINEAPP_API + "/support").catch(function() { return []; }),
+        api(LINEAPP_API + "/transactions/summary").catch(function() { return { data: {} }; })
+      ]).then(function(results) {
+        screenLoaded.activity = true;
+        var notifications = normalizeListPayload(results[0]);
+        var tickets = normalizeListPayload(results[1]);
+        var summary = (results[2] && results[2].data) || {};
+        var feed = extractFullActivityFeed(notifications, tickets, summary);
+        setActivitySummary(notifications, tickets, summary);
+        el.innerHTML = "";
+
+        var hero = document.createElement("div");
+        hero.className = "hero";
+        hero.innerHTML =
+          "<div class='pill'>Activity</div>" +
+          "<h3>อัปเดตทั้งหมดในที่เดียว</h3>" +
+          "<p>ดู notification, funding state, และ support history แบบเป็น feed เดียว เพื่อให้รู้ว่าอะไรเปลี่ยนและควรจัดการต่ออย่างไร</p>";
+        el.appendChild(hero);
+
+        var toolbarCard = document.createElement("div");
+        toolbarCard.className = "card";
+        toolbarCard.innerHTML = "<div class='card-title'>Actions</div>";
+        var toolbar = document.createElement("div");
+        toolbar.className = "toolbar";
+        toolbar.appendChild(makeToolButton("✦ Ask Jerry", openChat, true));
+        toolbar.appendChild(makeToolButton("✉ Open Support", function() { switchScreen("support"); }, false));
+        toolbar.appendChild(makeToolButton("↗ Telegram", openTelegram, false));
+        if (liffReady && window.liff && window.liff.closeWindow) {
+          toolbar.appendChild(makeToolButton("× Close", closeLiffWindow, false));
+        }
+        toolbarCard.appendChild(toolbar);
+        el.appendChild(toolbarCard);
+
+        var feedCard = document.createElement("div");
+        feedCard.className = "card";
+        feedCard.innerHTML = "<div class='card-title'>Timeline</div>";
+        var stack = document.createElement("div");
+        stack.className = "stack";
+        if (feed.length) {
+          feed.forEach(function(item) { stack.appendChild(makeActivityItem(item)); });
+        } else {
+          stack.innerHTML = "<div class='empty'>No recent activity</div>";
+        }
+        feedCard.appendChild(stack);
+        el.appendChild(feedCard);
+      }).catch(function(err) {
+        renderError(el, err.message || "Failed to load activity");
+      });
+    }
+
+    function loadAccount() {
+      var el = document.getElementById("screen-account");
+      renderLoading(el, "Loading account...");
+      Promise.all([
+        api(LINEAPP_API + "/accounts"),
+        api(LINEAPP_API + "/portfolio"),
+        api(LINEAPP_API + "/transactions/summary")
+      ]).then(function(results) {
+        screenLoaded.account = true;
+        var accountsResult = results[0] || {};
+        var accounts = accountsResult.data || [];
+        var portfolio = results[1] || {};
+        var summary = (results[2] && results[2].data) || {};
+        el.innerHTML = "";
+
+        var metrics = document.createElement("div");
+        metrics.className = "metrics";
+        [
+          ["Equity", formatMoney(portfolio.totalEquity)],
+          ["Balance", formatMoney(portfolio.totalBalance)],
+          ["Free Margin", formatMoney(portfolio.freeMargin)]
+        ].forEach(function(item) {
+          var node = document.createElement("div");
+          node.className = "metric";
+          node.innerHTML = "<span class='label'>" + item[0] + "</span><span class='value'>" + item[1] + "</span>";
+          metrics.appendChild(node);
+        });
+        el.appendChild(metrics);
+
+        var accountCard = document.createElement("div");
+        accountCard.className = "card";
+        accountCard.innerHTML = "<div class='card-title'>Trading Accounts</div>";
+        var accountGrid = document.createElement("div");
+        accountGrid.className = "account-grid";
+        if (accounts.length) {
+          accounts.forEach(function(acct) {
+            var row = document.createElement("div");
+            row.className = "account-row";
+            row.innerHTML =
+              "<div class='account-row-head'><span>MT5 #" + (acct.login || acct.accountId || "N/A") + "</span><span>" + formatMoney(acct.balance) + "</span></div>" +
+              "<p>Equity " + formatMoney(acct.equity) + " • Leverage " + (acct.leverage ? ("1:" + acct.leverage) : "-") + "</p>";
+            accountGrid.appendChild(row);
+          });
+        } else {
+          accountGrid.innerHTML = "<div class='empty'>ยังไม่มีข้อมูลบัญชีเทรด</div>";
+        }
+        accountCard.appendChild(accountGrid);
+        el.appendChild(accountCard);
+
+        var fundingCard = document.createElement("div");
+        fundingCard.className = "card";
+        fundingCard.innerHTML = "<div class='card-title'>Funding Summary</div>";
+        var fundingStack = document.createElement("div");
+        fundingStack.className = "stack";
+        fundingStack.appendChild(makeSupportItem("Deposits", "Total " + formatMoney(summary.totalDeposits || 0)));
+        fundingStack.appendChild(makeSupportItem("Withdrawals", "Total " + formatMoney(summary.totalWithdrawals || 0)));
+        fundingStack.appendChild(makeSupportItem("Pending", String((summary.pendingDepositsCount || 0) + (summary.pendingWithdrawalsCount || 0)) + " requests pending"));
+        fundingCard.appendChild(fundingStack);
+        el.appendChild(fundingCard);
+      }).catch(function(err) {
+        renderError(el, err.message || "Failed to load account");
+      });
+    }
+
+    function loadSupport() {
+      var el = document.getElementById("screen-support");
+      renderLoading(el, "Loading support...");
+      Promise.all([
+        api(LINEAPP_API + "/notifications").catch(function() { return []; }),
+        api(LINEAPP_API + "/support").catch(function() { return []; }),
+        api(LINEAPP_API + "/transactions/summary").catch(function() { return { data: {} }; })
+      ]).then(function(results) {
+        screenLoaded.support = true;
+        var notifications = normalizeListPayload(results[0]);
+        var tickets = normalizeListPayload(results[1]);
+        var summary = (results[2] && results[2].data) || {};
+        var activityFeed = extractActivityFeed(notifications, tickets, summary);
+        setActivitySummary(notifications, tickets, summary);
+        el.innerHTML = "";
+
+        var activityCard = document.createElement("div");
+        activityCard.className = "card";
+        activityCard.innerHTML = "<div class='card-title'>Activity Overview</div>";
+        var activityStack = document.createElement("div");
+        activityStack.className = "stack";
+        if (activityFeed.length) {
+          activityFeed.forEach(function(item) { activityStack.appendChild(makeActivityItem(item)); });
+        } else {
+          activityStack.innerHTML = "<div class='empty'>No recent activity</div>";
+        }
+        activityCard.appendChild(activityStack);
+        el.appendChild(activityCard);
+
+        var notifyCard = document.createElement("div");
+        notifyCard.className = "card";
+        notifyCard.innerHTML = "<div class='card-title'>Notifications</div>";
+        var notifyStack = document.createElement("div");
+        notifyStack.className = "stack";
+        if (notifications.length) {
+          notifications.slice(0, 4).forEach(function(item) {
+            notifyStack.appendChild(makeSupportItem(item.title || "Notification", item.message || item.description || ""));
+          });
+        } else {
+          notifyStack.innerHTML = "<div class='empty'>No notifications</div>";
+        }
+        notifyCard.appendChild(notifyStack);
+        el.appendChild(notifyCard);
+
+        var ticketCard = document.createElement("div");
+        ticketCard.className = "card";
+        ticketCard.innerHTML = "<div class='card-title'>Support Tickets</div>";
+        var ticketStack = document.createElement("div");
+        ticketStack.className = "stack";
+        if (tickets.length) {
+          tickets.slice(0, 4).forEach(function(ticket) {
+            ticketStack.appendChild(makeSupportItem(ticket.subject || "Ticket", (ticket.status || "Open") + (ticket.createdAt ? (" • " + new Date(ticket.createdAt).toLocaleDateString()) : "")));
+          });
+        } else {
+          ticketStack.innerHTML = "<div class='empty'>No tickets yet</div>";
+        }
+        ticketCard.appendChild(ticketStack);
+        el.appendChild(ticketCard);
+
+        var formCard = document.createElement("div");
+        formCard.className = "card support-form";
+        formCard.innerHTML =
+          "<div class='card-title'>Create Ticket</div>" +
+          "<input class='input' id='supportSubject' placeholder='เรื่อง / Subject'>" +
+          "<textarea id='supportDescription' placeholder='อธิบายปัญหาหรือสิ่งที่ต้องการให้ทีมช่วย'></textarea>" +
+          "<button class='btn btn-primary' onclick='submitSupport()'>ส่ง Ticket</button>";
+        el.appendChild(formCard);
+      }).catch(function(err) {
+        renderError(el, err.message || "Failed to load support");
+      });
+    }
+
+    function submitSupport() {
+      var subject = document.getElementById("supportSubject").value.trim();
+      var description = document.getElementById("supportDescription").value.trim();
+      if (!subject || !description) {
+        alert("กรุณากรอกหัวข้อและรายละเอียด");
+        return;
+      }
+      api(LINEAPP_API + "/support", { method: "POST", body: { subject: subject, description: description } })
+        .then(function() {
+          document.getElementById("supportSubject").value = "";
+          document.getElementById("supportDescription").value = "";
+          screenLoaded.support = false;
+          switchScreen("support");
+        })
+        .catch(function(err) {
+          alert(err.message || "ส่ง ticket ไม่สำเร็จ");
+        });
+    }
+
+    function makeAction(title, subtitle, handler) {
+      var button = document.createElement("button");
+      button.className = "quick-action";
+      button.type = "button";
+      button.onclick = handler;
+      button.innerHTML = "<strong>" + title + "</strong><span>" + subtitle + "</span>";
+      return button;
+    }
+
+    function makeStatus(title, badge, body) {
+      var row = document.createElement("div");
+      row.className = "status-row";
+      row.innerHTML = "<span class='badge " + badge.className + "'>" + badge.label + "</span><strong>" + title + "</strong><p>" + body + "</p>";
+      return row;
+    }
+
+    function makeSignal(sig, showMore) {
+      var item = document.createElement("div");
+      item.className = "signal-item";
+      var badge = ((sig.direction || "").toLowerCase() === "buy") ? "buy" : "sell";
+      item.innerHTML =
+        "<span class='badge " + badge + "'>" + (sig.direction || "VIEW") + "</span>" +
+        "<strong>" + (sig.symbol || "Market") + "</strong>" +
+        "<p>" + (sig.analysis || "Tap Jerry for more context.") + "</p>" +
+        "<p style='margin-top:8px;'>" +
+        "Entry " + (sig.entry || "-") + " • SL " + (sig.sl || "-") + " • TP " + (sig.tp || "-") +
+        (showMore ? (" • R:R " + (sig.riskReward || "-")) : "") +
+        "</p>";
+      return item;
+    }
+
+    function makeSupportItem(title, body) {
+      var item = document.createElement("div");
+      item.className = "support-item";
+      item.innerHTML = "<strong>" + title + "</strong><p>" + body + "</p>";
+      return item;
+    }
+
+    function makeToolButton(label, handler, primary) {
+      var button = document.createElement("button");
+      button.className = "tool-btn" + (primary ? " primary" : "");
+      button.type = "button";
+      button.textContent = label;
+      button.onclick = handler;
+      return button;
+    }
+
+    function makeActivityItem(item) {
+      var tone = item.tone || "good";
+      var label = item.type || "activity";
+      var wrapper = document.createElement("div");
+      wrapper.className = "activity-item " + tone;
+      wrapper.innerHTML =
+        "<div class='activity-meta'><span>" + label + "</span><span>" + formatStamp(item.stamp) + "</span></div>" +
+        "<strong>" + item.title + "</strong>" +
+        "<p>" + item.body + "</p>";
+      return wrapper;
+    }
+
+    function openTelegram() {
+      var url = appConfig.telegramUrl;
+      if (!url && appConfig.telegramUsername) {
+        url = "https://t.me/" + appConfig.telegramUsername;
+      }
+      if (!url) {
+        alert("Telegram handoff is not configured.");
+        return;
+      }
+      if (liffReady && window.liff && window.liff.openWindow) {
+        window.liff.openWindow({ url: url, external: true });
+        return;
+      }
+      window.location.href = url;
+    }
+
+    function closeLiffWindow() {
+      if (liffReady && window.liff && window.liff.closeWindow) {
+        window.liff.closeWindow();
+      }
+    }
+
+    function openChat() {
+      document.getElementById("chatOverlay").classList.add("open");
+      if (!document.getElementById("chatLog").children.length) {
+        addBubble("assistant", "สวัสดีครับ ผมคือ Jerry เวอร์ชัน LINE\n\nผมช่วยสรุปตลาด, อ่านสถานะพอร์ต, และเตรียมคุณไปสู่ Telegram เมื่อถึงขั้น execution ได้");
+      }
+    }
+
+    function closeChat() {
+      document.getElementById("chatOverlay").classList.remove("open");
+    }
+
+    function addBubble(role, text) {
+      var log = document.getElementById("chatLog");
+      var bubble = document.createElement("div");
+      bubble.className = "bubble " + role;
+      bubble.textContent = text;
+      log.appendChild(bubble);
+      log.scrollTop = log.scrollHeight;
+    }
+
+    function sendChat() {
+      var input = document.getElementById("chatInput");
+      var message = input.value.trim();
+      if (!message) return;
+      input.value = "";
+      addBubble("user", message);
+      api(LINEAPP_API + "/chat", { method: "POST", body: { message: message } })
+        .then(function(data) {
+          addBubble("assistant", data.reply || "No reply");
+        })
+        .catch(function(err) {
+          addBubble("assistant", err.message || "AI error");
+        });
+    }
+
+    init();
+  </script>
+</body>
+</html>

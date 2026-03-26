@@ -42,9 +42,9 @@ Open http://localhost:3000 for the web chat demo.
 3. Copy the token → paste in `.env` as `TELEGRAM_BOT_TOKEN`
 4. Set commands: `/setcommands` →
    ```
-   analyze - วิเคราะห์ตลาดด้วย ENGULF-X
-   checklist - เช็คลิสต์ 5 ขั้นตอน
-   zones - ตาราง Zone Priority
+   analyze - วิเคราะห์ตลาด (TA, FA, Sentiment)
+   checklist - Pre-trade Checklist
+   zones - Trade Setup Grading
    reset - เริ่มบทสนทนาใหม่
    ```
 
@@ -130,7 +130,7 @@ ybx-chatbot/
 ├── src/
 │   ├── server.js              # Express server + bot launcher
 │   ├── ai-engine.js           # Claude AI + conversation memory
-│   ├── engulfx-system-prompt.md  # ENGULF-X knowledge base
+│   ├── system-prompt.md          # Trading analysis knowledge base
 │   └── bots/
 │       ├── telegram.js        # Telegram bot
 │       ├── discord.js         # Discord bot (+ slash commands)
@@ -146,8 +146,8 @@ ybx-chatbot/
 1. User sends message on any platform (Telegram/Discord/LINE/Web)
 2. Platform bot routes message → `ai-engine.js`
 3. AI Engine optionally fetches real-time price from Finnhub
-4. AI Engine sends message + ENGULF-X system prompt → Claude API
-5. Claude responds using ENGULF-X methodology only
+4. AI Engine sends message + trading analysis system prompt → Gemini API
+5. AI responds with comprehensive trading analysis
 6. Response sent back to user on their platform
 
 ### Per-User Memory
@@ -167,7 +167,7 @@ Set `GEMINI_MODEL` in `.env`:
 In `ai-engine.js` → `detectSymbol()`, add entries to `symbolMap`.
 
 ### Modify Bot Personality
-Edit `src/engulfx-system-prompt.md` — this is the complete knowledge base and behavior rules.
+Edit `src/system-prompt.md` — this is the complete knowledge base and behavior rules.
 
 ### Add TradingView Signal Broadcasting
 The `/webhook/tradingview` endpoint is ready. Add logic to broadcast signals to subscribed users across platforms.

@@ -10,7 +10,7 @@ const {
   EmbedBuilder,
 } = require("discord.js");
 
-function setupDiscord(aiEngine) {
+function setupDiscord(aiEngine, commandRouter, authService) {
   const token = process.env.DISCORD_BOT_TOKEN;
   const appId = process.env.DISCORD_APP_ID;
   if (!token) {
@@ -30,20 +30,35 @@ function setupDiscord(aiEngine) {
   // Register slash commands
   const commands = [
     new SlashCommandBuilder()
-      .setName("analyze")
-      .setDescription("วิเคราะห์ตลาดด้วย ENGULF-X")
+      .setName("price")
+      .setDescription("ดูราคาสดจาก YBX")
       .addStringOption((opt) =>
-        opt
-          .setName("symbol")
-          .setDescription("สินทรัพย์ เช่น XAUUSD, EURUSD, BTC")
-          .setRequired(true)
+        opt.setName("symbol").setDescription("สินทรัพย์ เช่น XAUUSD, EURUSD").setRequired(false)
       ),
     new SlashCommandBuilder()
+      .setName("analyze")
+      .setDescription("วิเคราะห์ตลาด (TA, FA, Sentiment)")
+      .addStringOption((opt) =>
+        opt.setName("symbol").setDescription("สินทรัพย์ เช่น XAUUSD, EURUSD, BTC").setRequired(true)
+      ),
+    new SlashCommandBuilder()
+      .setName("news")
+      .setDescription("ข่าวเศรษฐกิจวันนี้"),
+    new SlashCommandBuilder()
+      .setName("levels")
+      .setDescription("แนวรับแนวต้าน")
+      .addStringOption((opt) =>
+        opt.setName("symbol").setDescription("สินทรัพย์ เช่น XAUUSD").setRequired(true)
+      ),
+    new SlashCommandBuilder()
+      .setName("rate")
+      .setDescription("อัตราแลกเปลี่ยน THB/USD"),
+    new SlashCommandBuilder()
       .setName("checklist")
-      .setDescription("แสดงเช็คลิสต์ 5 ขั้นตอน ENGULF-X"),
+      .setDescription("แสดง Pre-trade Checklist 5 ขั้นตอน"),
     new SlashCommandBuilder()
       .setName("zones")
-      .setDescription("แสดงตาราง Zone Priority"),
+      .setDescription("แสดง Trade Setup Grading"),
     new SlashCommandBuilder()
       .setName("reset")
       .setDescription("เริ่มบทสนทนาใหม่"),
@@ -72,69 +87,76 @@ function setupDiscord(aiEngine) {
 
     const userId = interaction.user.id;
     const userName = interaction.user.username;
+    const cmdName = interaction.commandName;
 
-    if (interaction.commandName === "checklist") {
+    // Build command text for the router
+    const symbolOpt = interaction.options?.getString("symbol") || "";
+    const cmdText = symbolOpt ? `/${cmdName} ${symbolOpt}` : `/${cmdName}`;
+
+    // Route through command router
+    if (commandRouter) {
+      // Defer for commands that may take time
+      if (["analyze", "price", "news", "levels", "rate"].includes(cmdName)) {
+        await interaction.deferReply();
+      }
+
+      const result = await commandRouter.execute(cmdText, "discord", userId, userName);
+      if (result) {
+        return sendDiscordReply(interaction, result.text);
+      }
+    }
+
+    // Fallback: embed-based responses for checklist/zones/reset
+    if (cmdName === "checklist") {
       const embed = new EmbedBuilder()
         .setColor(0xffd700)
-        .setTitle("📋 ENGULF-X เช็คลิสต์ 5 ขั้นตอน")
+        .setTitle("📋 Pre-trade Checklist 5 ขั้นตอน")
         .addFields(
-          { name: "1️⃣ BOS", value: "MAJOR หรือ MINOR?", inline: true },
-          { name: "2️⃣ YELLOW BOX", value: "RET ที่ยังไม่ได้ใช้", inline: true },
-          { name: "3️⃣ CONFIRM", value: "CHOCH PULLBACK", inline: true },
-          { name: "4️⃣ ZONE", value: "1ST MAJOR หรือ KF", inline: true },
-          { name: "5️⃣ ACTION", value: "คำนวณ TP/SL", inline: true }
+          { name: "1️⃣ TREND", value: "HTF ทิศทางหลัก (Bullish/Bearish/Range?)", inline: true },
+          { name: "2️⃣ LEVELS", value: "แนวรับ/แนวต้านสำคัญ + Fibonacci", inline: true },
+          { name: "3️⃣ CONFIRM", value: "รอ confirmation (Candle, Indicator)", inline: true },
+          { name: "4️⃣ ENTRY", value: "Entry, SL, TP + คำนวณ R:R", inline: true },
+          { name: "5️⃣ SIZE", value: "คำนวณ Lot Size ตาม risk 1-2%", inline: true }
         )
-        .setFooter({ text: "กฎ 1%/2% อัตโนมัติ มีความสำคัญสูงสุด!" });
+        .setFooter({ text: "ตรวจครบ 5 ข้อก่อนเข้าเทรดทุกครั้ง!" });
       return interaction.reply({ embeds: [embed] });
     }
 
-    if (interaction.commandName === "zones") {
+    if (cmdName === "zones") {
       const embed = new EmbedBuilder()
         .setColor(0xffd700)
-        .setTitle("📊 Zone Priority Table")
+        .setTitle("📊 Trade Setup Grading")
         .setDescription(
           "```\n" +
-            "Priority | Zone       | Stars | Size | R:R\n" +
-            "---------|------------|-------|------|-----\n" +
-            "1 (Best) | 1ST MAJOR  | ★★★★★ | 100% | 1:1.5\n" +
-            "2        | KF         | ★★★★☆ | 100% | 1:2\n" +
-            "3        | YELLOW BOX | ★★★☆☆ | 80%  | 1:2.5\n" +
-            "4        | MAJOR BOX  | ★★☆☆☆ | 60%  | 1:3\n" +
-            "5 (Avoid)| MINOR RET  | ★☆☆☆☆ | 50%  | 1:3+\n" +
+            "Grade | Stars | Confluence    | Size | Min R:R\n" +
+            "------|-------|---------------|------|--------\n" +
+            "A+    | ★★★★★ | Multi-TF      | 100% | 1:3\n" +
+            "A     | ★★★★☆ | Strong        | 100% | 1:2\n" +
+            "B     | ★★★☆☆ | Moderate      | 75%  | 1:2\n" +
+            "C     | ★★☆☆☆ | Weak          | 50%  | 1:3\n" +
+            "D     | ★☆☆☆☆ | No confluence | SKIP | -\n" +
             "```"
         );
       return interaction.reply({ embeds: [embed] });
     }
 
-    if (interaction.commandName === "reset") {
+    if (cmdName === "reset") {
       aiEngine.resetConversation("discord", userId);
       return interaction.reply("🔄 เริ่มบทสนทนาใหม่แล้วครับ");
     }
 
-    if (interaction.commandName === "analyze") {
-      const symbol = interaction.options.getString("symbol");
-      await interaction.deferReply();
-
+    // analyze fallback (no command router)
+    if (cmdName === "analyze") {
+      if (!interaction.deferred) await interaction.deferReply();
       try {
         const reply = await aiEngine.chat(
-          "discord",
-          userId,
-          `วิเคราะห์ ${symbol} ด้วย ENGULF-X ให้หน่อย`,
+          "discord", userId,
+          `วิเคราะห์ ${symbolOpt} ให้หน่อย`,
           userName
         );
-
-        // Discord has 2000 char limit
-        if (reply.length > 1900) {
-          const chunks = reply.match(/.{1,1900}/gs);
-          await interaction.editReply(chunks[0]);
-          for (let i = 1; i < chunks.length; i++) {
-            await interaction.followUp(chunks[i]);
-          }
-        } else {
-          await interaction.editReply(reply);
-        }
+        return sendDiscordReply(interaction, reply);
       } catch (err) {
-        await interaction.editReply("❌ เกิดข้อผิดพลาด กรุณาลองใหม่ครับ");
+        return sendDiscordReply(interaction, "❌ เกิดข้อผิดพลาด กรุณาลองใหม่ครับ");
       }
     }
   });
@@ -158,19 +180,19 @@ function setupDiscord(aiEngine) {
     }
     if (!text) return;
 
+    // Try command router for slash-like commands in DMs
+    if (text.startsWith("/") && commandRouter) {
+      const result = await commandRouter.execute(text, "discord", userId, userName);
+      if (result) {
+        return sendDiscordMessage(message, result.text);
+      }
+    }
+
     await message.channel.sendTyping();
 
     try {
       const reply = await aiEngine.chat("discord", userId, text, userName);
-
-      if (reply.length > 1900) {
-        const chunks = reply.match(/.{1,1900}/gs);
-        for (const chunk of chunks) {
-          await message.reply(chunk);
-        }
-      } else {
-        await message.reply(reply);
-      }
+      await sendDiscordMessage(message, reply);
     } catch (err) {
       console.error("Discord handler error:", err.message);
       await message.reply("❌ เกิดข้อผิดพลาด กรุณาลองใหม่ครับ");
@@ -179,6 +201,43 @@ function setupDiscord(aiEngine) {
 
   client.login(token);
   return client;
+}
+
+/**
+ * Send reply to a Discord interaction (handles deferred + chunking)
+ */
+async function sendDiscordReply(interaction, text) {
+  if (text.length > 1900) {
+    const chunks = text.match(/.{1,1900}/gs);
+    if (interaction.deferred) {
+      await interaction.editReply(chunks[0]);
+    } else {
+      await interaction.reply(chunks[0]);
+    }
+    for (let i = 1; i < chunks.length; i++) {
+      await interaction.followUp(chunks[i]);
+    }
+  } else {
+    if (interaction.deferred) {
+      await interaction.editReply(text);
+    } else {
+      await interaction.reply(text);
+    }
+  }
+}
+
+/**
+ * Send message reply (handles chunking for 2000 char limit)
+ */
+async function sendDiscordMessage(message, text) {
+  if (text.length > 1900) {
+    const chunks = text.match(/.{1,1900}/gs);
+    for (const chunk of chunks) {
+      await message.reply(chunk);
+    }
+  } else {
+    await message.reply(text);
+  }
 }
 
 module.exports = setupDiscord;

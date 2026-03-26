@@ -2,6 +2,7 @@
  * CRM API Client — Yellow Box Markets
  * Handles all communication with the YBX CRM backend (JWT auth)
  */
+const { log, withTiming } = require('./logger');
 
 class CRMClient {
   constructor({ baseUrl, email, password }) {
@@ -54,27 +55,29 @@ class CRMClient {
 
     this._loginPromise = (async () => {
       try {
-        const res = await fetch(`${this.baseUrl}/api/v1/auth/login`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            email: this.email,
-            password: this.password,
-          }),
+        await withTiming('crm_login', { path: '/api/v1/auth/login' }, async () => {
+          const res = await fetch(`${this.baseUrl}/api/v1/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              email: this.email,
+              password: this.password,
+            }),
+          });
+
+          if (!res.ok) {
+            throw new Error(`CRM login failed: ${res.status} ${res.statusText}`);
+          }
+
+          const json = await res.json();
+          const data = json.data || json;
+
+          this.accessToken = data.accessToken;
+          this.refreshToken = data.refreshToken;
+          // Default 60 min expiry
+          this.tokenExpiry = Date.now() + 55 * 60 * 1000;
         });
-
-        if (!res.ok) {
-          throw new Error(`CRM login failed: ${res.status} ${res.statusText}`);
-        }
-
-        const json = await res.json();
-        const data = json.data || json;
-
-        this.accessToken = data.accessToken;
-        this.refreshToken = data.refreshToken;
-        // Default 60 min expiry
-        this.tokenExpiry = Date.now() + 55 * 60 * 1000;
-        console.log('✅ CRM authenticated');
+        log('info', 'crm_authenticated', { baseUrl: this.baseUrl });
       } finally {
         this._loginPromise = null;
       }
@@ -87,24 +90,33 @@ class CRMClient {
    * Refresh the access token
    */
   async _refreshAuth() {
-    const res = await fetch(`${this.baseUrl}/api/v1/auth/refresh-token`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken: this.refreshToken }),
+    await withTiming('crm_refresh_token', { path: '/api/v1/auth/refresh-token' }, async () => {
+      const res = await fetch(`${this.baseUrl}/api/v1/auth/refresh-token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken: this.refreshToken }),
+      });
+
+      if (!res.ok) {
+        this.accessToken = null;
+        this.refreshToken = null;
+        throw new Error('Token refresh failed');
+      }
+
+      const json = await res.json();
+      const data = json.data || json;
+
+      this.accessToken = data.accessToken;
+      this.refreshToken = data.refreshToken;
+      this.tokenExpiry = Date.now() + 55 * 60 * 1000;
     });
+  }
 
-    if (!res.ok) {
-      this.accessToken = null;
-      this.refreshToken = null;
-      throw new Error('Token refresh failed');
-    }
-
-    const json = await res.json();
-    const data = json.data || json;
-
-    this.accessToken = data.accessToken;
-    this.refreshToken = data.refreshToken;
-    this.tokenExpiry = Date.now() + 55 * 60 * 1000;
+  async _fetchJson(url, options, meta) {
+    return withTiming('crm_http', meta, async () => {
+      const res = await fetch(url, options);
+      return { res, json: null };
+    });
   }
 
   /**
@@ -118,23 +130,23 @@ class CRMClient {
       if (v !== undefined && v !== null) url.searchParams.set(k, v);
     }
 
-    const res = await fetch(url.toString(), {
+    const { res } = await this._fetchJson(url.toString(), {
       headers: {
         'Authorization': `Bearer ${this.accessToken}`,
         'Accept': 'application/json',
       },
-    });
+    }, { method: 'GET', path, auth: 'service' });
 
     if (res.status === 401) {
       // Token expired mid-request — retry once
       this.accessToken = null;
       await this._ensureAuth();
-      const retry = await fetch(url.toString(), {
+      const { res: retry } = await this._fetchJson(url.toString(), {
         headers: {
           'Authorization': `Bearer ${this.accessToken}`,
           'Accept': 'application/json',
         },
-      });
+      }, { method: 'GET', path, auth: 'service', retry: true });
       if (!retry.ok) {
         throw new Error(`CRM API ${retry.status}: ${retry.statusText} — ${path}`);
       }
@@ -157,9 +169,9 @@ class CRMClient {
       if (v !== undefined && v !== null) url.searchParams.set(k, v);
     }
 
-    const res = await fetch(url.toString(), {
+    const { res } = await this._fetchJson(url.toString(), {
       headers: { 'Accept': 'application/json' },
-    });
+    }, { method: 'GET', path, auth: 'public' });
 
     if (!res.ok) {
       throw new Error(`CRM API ${res.status}: ${res.statusText} — ${path}`);
@@ -192,11 +204,11 @@ class CRMClient {
    * Login as a member with email/password
    */
   async memberLogin(email, password) {
-    const res = await fetch(`${this.baseUrl}/api/v1/auth/login`, {
+    const { res } = await this._fetchJson(`${this.baseUrl}/api/v1/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
-    });
+    }, { method: 'POST', path: '/api/v1/auth/login', auth: 'member' });
 
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -212,11 +224,11 @@ class CRMClient {
    * Refresh a member's token
    */
   async memberRefreshToken(refreshToken) {
-    const res = await fetch(`${this.baseUrl}/api/v1/auth/refresh-token`, {
+    const { res } = await this._fetchJson(`${this.baseUrl}/api/v1/auth/refresh-token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refreshToken }),
-    });
+    }, { method: 'POST', path: '/api/v1/auth/refresh-token', auth: 'member' });
 
     if (!res.ok) {
       throw new Error('Member token refresh failed');
@@ -235,12 +247,12 @@ class CRMClient {
       if (v !== undefined && v !== null) url.searchParams.set(k, v);
     }
 
-    const res = await fetch(url.toString(), {
+    const { res } = await this._fetchJson(url.toString(), {
       headers: {
         'Authorization': `Bearer ${memberToken}`,
         'Accept': 'application/json',
       },
-    });
+    }, { method: 'GET', path, auth: 'member' });
 
     if (!res.ok) {
       throw new Error(`CRM Member API ${res.status}: ${res.statusText} — ${path}`);
@@ -288,7 +300,7 @@ class CRMClient {
    * Internal: make authenticated POST request using member's token
    */
   async _memberPost(memberToken, path, body = {}) {
-    const res = await fetch(`${this.baseUrl}${path}`, {
+    const { res } = await this._fetchJson(`${this.baseUrl}${path}`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${memberToken}`,
@@ -296,7 +308,7 @@ class CRMClient {
         'Accept': 'application/json',
       },
       body: JSON.stringify(body),
-    });
+    }, { method: 'POST', path, auth: 'member' });
 
     const json = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -308,6 +320,92 @@ class CRMClient {
       throw err;
     }
     return json;
+  }
+
+  /**
+   * Internal: make authenticated PUT request using member's token
+   */
+  async _memberPut(memberToken, path, body = {}) {
+    const { res } = await this._fetchJson(`${this.baseUrl}${path}`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${memberToken}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify(body),
+    }, { method: 'PUT', path, auth: 'member' });
+
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const msg = json.message || json.title || `${res.status} ${res.statusText}`;
+      const err = new Error(msg);
+      err.status = res.status;
+      err.errorCode = json.errorCode;
+      err.errors = json.errors;
+      throw err;
+    }
+    return json;
+  }
+
+  // ========== Trading Orders (member's token) ==========
+
+  /**
+   * Place a market order
+   */
+  async placeOrder(memberToken, accountId, { symbol, side, volume, stopLoss, takeProfit }) {
+    return this._memberPost(memberToken, `/api/v1/trading/accounts/${accountId}/orders`, {
+      Mt5AccountId: accountId,
+      Symbol: symbol,
+      Side: side,
+      Volume: volume,
+      StopLoss: stopLoss,
+      TakeProfit: takeProfit,
+      Source: 'JerryAI-Telegram',
+    });
+  }
+
+  /**
+   * Place a pending order (limit/stop)
+   */
+  async placePendingOrder(memberToken, accountId, { symbol, side, orderType, price, volume, stopLoss, takeProfit }) {
+    return this._memberPost(memberToken, `/api/v1/trading/accounts/${accountId}/pending-orders`, {
+      Mt5AccountId: accountId,
+      Symbol: symbol,
+      Side: side,
+      OrderType: orderType,
+      Price: price,
+      Volume: volume,
+      StopLoss: stopLoss,
+      TakeProfit: takeProfit,
+      Source: 'JerryAI-Telegram',
+    });
+  }
+
+  /**
+   * Close an open position
+   */
+  async closePosition(memberToken, accountId, positionTicket, volume) {
+    return this._memberPost(memberToken, `/api/v1/trading/accounts/${accountId}/positions/${positionTicket}/close`, {
+      Volume: volume,
+    });
+  }
+
+  /**
+   * Modify position TP/SL
+   */
+  async modifyPosition(memberToken, accountId, positionTicket, { takeProfit, stopLoss }) {
+    return this._memberPut(memberToken, `/api/v1/trading/accounts/${accountId}/positions/${positionTicket}`, {
+      TakeProfit: takeProfit,
+      StopLoss: stopLoss,
+    });
+  }
+
+  /**
+   * Get account positions
+   */
+  async getAccountPositions(memberToken, accountId) {
+    return this._memberGet(memberToken, `/api/v1/trading/accounts/${accountId}/positions`);
   }
 
   /**
@@ -418,6 +516,25 @@ class CRMClient {
 
   async createJournalEntry(memberToken, entry) {
     return this._memberPost(memberToken, '/api/v1/journal', entry);
+  }
+
+  async deleteJournalEntry(memberToken, entryId) {
+    const path = `/api/v1/journal/${entryId}`;
+    const { res } = await this._fetchJson(`${this.baseUrl}${path}`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${memberToken}`,
+        'Accept': 'application/json',
+      },
+    }, { method: 'DELETE', path, auth: 'member' });
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}));
+      const msg = json.message || `${res.status} ${res.statusText}`;
+      const err = new Error(msg);
+      err.status = res.status;
+      throw err;
+    }
+    return res.json().catch(() => ({ success: true }));
   }
 }
 

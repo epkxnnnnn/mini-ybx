@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-YBX Chatbot is a multi-platform AI trading assistant for Yellow Box Markets, built around the ENGULF-X trading methodology. It serves users across Telegram, Discord, LINE, and a web chat interface, all powered by a single Claude AI engine.
+YBX Chatbot is a multi-platform AI trading assistant for Yellow Box Markets, providing comprehensive trading analysis (TA, FA, Sentiment). It serves users across Telegram, Discord, LINE, and a web chat interface, all powered by a single AI engine.
 
 ## Commands
 
@@ -28,7 +28,7 @@ User Message → Platform Bot Handler → YBXAIEngine.chat() → Claude API → 
 
 - `src/server.js` — Express server, REST API endpoints, bot initialization
 - `src/ai-engine.js` — Gemini API integration (`@google/genai`), conversation memory (in-memory Map keyed by `platform:userId`), symbol detection, Finnhub price fetching
-- `src/engulfx-system-prompt.md` — Complete ENGULF-X trading knowledge base and AI behavior rules (the system prompt)
+- `src/system-prompt.md` — Complete trading analysis knowledge base and AI behavior rules (the system prompt)
 - `src/bots/telegram.js` — Telegram bot (long-polling mode)
 - `src/bots/discord.js` — Discord bot (slash commands + message events, REST-based command registration)
 - `src/bots/line.js` — LINE bot (webhook at `/webhook/line`)

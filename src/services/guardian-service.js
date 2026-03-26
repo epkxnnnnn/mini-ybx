@@ -4,13 +4,21 @@
  */
 
 class GuardianService {
-  constructor() {
+  constructor(options = {}) {
     // Map keyed by "platform:userId" → { active, activatedAt }
-    this.states = new Map();
+    this.states = options.states || new Map();
+    this.repo = options.repo || null;
   }
 
   _key(platform, userId) {
     return `${platform}:${userId}`;
+  }
+
+  _persist(key, value) {
+    if (!this.repo) return;
+    this.repo.set('guardian:states', key, value).catch((err) => {
+      console.error(`State persist failed [guardian:states:${key}]:`, err.message);
+    });
   }
 
   /**
@@ -28,7 +36,9 @@ class GuardianService {
     const key = this._key(platform, userId);
     const existing = this.states.get(key);
     if (existing && existing.active) return; // already active
-    this.states.set(key, { active: true, activatedAt: Date.now() });
+    const state = { active: true, activatedAt: Date.now() };
+    this.states.set(key, state);
+    this._persist(key, state);
     console.log(`[Guardian] Activated for ${key}`);
   }
 
@@ -39,7 +49,9 @@ class GuardianService {
     const key = this._key(platform, userId);
     const existing = this.states.get(key);
     if (!existing || !existing.active) return; // already inactive
-    this.states.set(key, { active: false, activatedAt: existing.activatedAt });
+    const state = { active: false, activatedAt: existing.activatedAt };
+    this.states.set(key, state);
+    this._persist(key, state);
     console.log(`[Guardian] Deactivated for ${key}`);
   }
 

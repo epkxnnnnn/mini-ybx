@@ -10,6 +10,54 @@ let guardianService = null;
 let tradePlanService = null;
 let crmClient = null;
 
+function getTelegramHandoffUrl() {
+  if (process.env.TELEGRAM_BOT_URL) return process.env.TELEGRAM_BOT_URL;
+  if (process.env.TELEGRAM_BOT_USERNAME) return `https://t.me/${process.env.TELEGRAM_BOT_USERNAME}`;
+  return null;
+}
+
+function buildTelegramHandoffText(reason = "advanced_execution") {
+  const url = getTelegramHandoffUrl();
+  const reasonText = reason === "positions"
+    ? "การจัดการสถานะเปิด เช่น ปิดบางส่วน, ปิดทั้งหมด, หรือเลื่อน Stop Loss"
+    : "การส่งคำสั่งและจัดการความเสี่ยงขั้นสูง";
+
+  return (
+    `📲 ฟีเจอร์นี้ทำได้ดีที่สุดบน Telegram\n\n` +
+    `Jerry บน Telegram รองรับ ${reasonText}\n` +
+    `รวมถึง lot guidance, preflight check, และ position protection\n` +
+    (url ? `\nเปิดใช้งานต่อที่นี่:\n${url}` : `\nตั้งค่า TELEGRAM_BOT_USERNAME หรือ TELEGRAM_BOT_URL เพื่อแสดงลิงก์ต่อไปยัง Telegram`)
+  );
+}
+
+function buildLineTradeSetupHandoff(planId, reply) {
+  const url = getTelegramHandoffUrl();
+  const text = url
+    ? `${reply}\n\n📲 ต้องการส่งคำสั่งหรือจัดการสถานะต่อ? ใช้ Telegram:\n${url}`
+    : reply;
+
+  return {
+    type: "text",
+    text,
+    quickReply: {
+      items: [
+        {
+          type: "action",
+          action: { type: "message", label: "\u2705 บันทึกแผน", text: `บันทึกแผน:${planId}` },
+        },
+        {
+          type: "action",
+          action: { type: "message", label: "📲 ไป Telegram", text: "ไป telegram" },
+        },
+        {
+          type: "action",
+          action: { type: "message", label: "\u274C ยกเลิก", text: `ยกเลิกแผน:${planId}` },
+        },
+      ],
+    },
+  };
+}
+
 function setupLINE(app, aiEngine, commandRouter, authService) {
   const channelAccessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN;
   const channelSecret = process.env.LINE_CHANNEL_SECRET;
@@ -51,6 +99,9 @@ setupLINE.setDependencies = function (deps) {
   if (deps.tradePlanService) tradePlanService = deps.tradePlanService;
   if (deps.crmClient) crmClient = deps.crmClient;
 };
+setupLINE.getTelegramHandoffUrl = getTelegramHandoffUrl;
+setupLINE.buildTelegramHandoffText = buildTelegramHandoffText;
+setupLINE.buildLineTradeSetupHandoff = buildLineTradeSetupHandoff;
 
 // Thai keyword → command mapping
 const THAI_COMMANDS = {
@@ -196,6 +247,18 @@ async function handleEvent(event, client, aiEngine, commandRouter, authService) 
     }
   }
 
+  // ========== Execution Handoff Commands ==========
+  if (
+    text === "positions" || text === "/positions" || text === "จัดการสถานะ" ||
+    text === "เปิดออเดอร์" || text === "ส่งคำสั่ง" || text === "execute" ||
+    text === "ไป telegram" || text === "telegram"
+  ) {
+    const reason = (text === "positions" || text === "/positions" || text === "จัดการสถานะ")
+      ? "positions"
+      : "advanced_execution";
+    return replyLine(client, replyToken, buildTelegramHandoffText(reason));
+  }
+
   // ========== Thai Keyword Commands ==========
   let commandText = null;
   const lowerText = text.toLowerCase();
@@ -225,32 +288,29 @@ async function handleEvent(event, client, aiEngine, commandRouter, authService) 
   if (text === "/start" || text === "เริ่มต้น") {
     return replyLine(client, replyToken,
       "สวัสดีครับ! \uD83D\uDC4B\n\n" +
-      "ผมคือ Jerry ผู้ช่วย AI ของ Yellow Box Markets\n\n" +
-      "\uD83D\uDD39 วิเคราะห์ตลาดด้วย ENGULF-X\n" +
+      "ผมคือ Jerry — AI Trading Analyst ของ Yellow Box Markets\n\n" +
+      "\uD83D\uDD39 วิเคราะห์ตลาดด้วย TA, FA, Sentiment\n" +
       "\uD83D\uDD39 ดูราคาสด, ข่าว, แนวรับแนวต้าน\n" +
       "\uD83D\uDD39 สอนกลยุทธ์การเทรด\n\n" +
       "คำสั่ง:\n" +
       "\"เข้าสู่ระบบ\" — เข้าสู่ระบบ\n" +
       "\"พอร์ต\" — ดูสถานะพอร์ต\n" +
       "\"ราคา\" — ดูราคาสด\n" +
-      "\"วิเคราะห์\" — วิเคราะห์ ENGULF-X\n" +
+      "\"วิเคราะห์\" — วิเคราะห์ตลาด\n" +
       "\"ข่าว\" — ข่าวเศรษฐกิจวันนี้\n" +
-      "\"เช็คลิสต์\" — เช็คลิสต์ 5 ขั้นตอน\n\n" +
+      "\"เช็คลิสต์\" — Pre-trade Checklist\n\n" +
       "หรือส่งข้อความได้เลยครับ! \uD83D\uDCAC"
     );
   }
 
   if (text === "/checklist" || text === "เช็คลิสต์") {
     return replyLine(client, replyToken,
-      "\uD83D\uDCCB ENGULF-X เช็คลิสต์ 5 ขั้นตอน\n\n" +
-      "1\uFE0F\u20E3 BOS — MAJOR หรือ MINOR?\n" +
-      "2\uFE0F\u20E3 YELLOW BOX — กล่อง RET ที่ยังไม่ได้ใช้\n" +
-      "3\uFE0F\u20E3 CONFIRM — CHOCH PULLBACK\n" +
-      "4\uFE0F\u20E3 ZONE — 1ST MAJOR หรือ KF\n" +
-      "5\uFE0F\u20E3 ACTION — คำนวณ TP/SL\n\n" +
-      "\u2757 กฎ 1%/2% อัตโนมัติ มีความสำคัญสูงสุด\n" +
-      "\u2022 BUY = ราคาลด 1% → ซื้อทันที\n" +
-      "\u2022 SELL = ราคาเพิ่ม 2% → ขายทันที"
+      "\uD83D\uDCCB Pre-trade Checklist 5 ขั้นตอน\n\n" +
+      "1\uFE0F\u20E3 TREND — HTF ทิศทางหลัก (Bullish/Bearish/Range?)\n" +
+      "2\uFE0F\u20E3 LEVELS — แนวรับ/แนวต้านสำคัญ + Fibonacci\n" +
+      "3\uFE0F\u20E3 CONFIRM — รอ confirmation (Candlestick pattern, Indicator signal)\n" +
+      "4\uFE0F\u20E3 ENTRY — จุดเข้าเทรด Entry, SL, TP + คำนวณ R:R\n" +
+      "5\uFE0F\u20E3 SIZE — คำนวณ Lot Size ตาม risk 1-2%"
     );
   }
 
@@ -280,25 +340,13 @@ async function handleEvent(event, client, aiEngine, commandRouter, authService) 
 
     // Detect trade setup in AI response and add confirmation buttons
     if (tradePlanService) {
-      const setup = tradePlanService.detectTradeSetup(reply);
+      const setup = tradePlanService.resolveTradeSetup(
+        reply,
+        aiEngine.getLastTradeSetup("line", userId)
+      );
       if (setup) {
         const plan = tradePlanService.createPending("line", userId, setup);
-        const quickReplyMsg = {
-          type: "text",
-          text: reply,
-          quickReply: {
-            items: [
-              {
-                type: "action",
-                action: { type: "message", label: "\u2705 บันทึกแผน", text: `บันทึกแผน:${plan.id}` },
-              },
-              {
-                type: "action",
-                action: { type: "message", label: "\u274C ยกเลิก", text: `ยกเลิกแผน:${plan.id}` },
-              },
-            ],
-          },
-        };
+        const quickReplyMsg = buildLineTradeSetupHandoff(plan.id, reply);
         // Chunk if needed, but quick reply only on last message
         if (reply.length > 4500) {
           const chunks = reply.match(/.{1,4500}/gs);

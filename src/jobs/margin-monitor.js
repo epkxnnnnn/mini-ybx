@@ -3,12 +3,28 @@
  * Polls authenticated sessions, detects margin zone changes, pushes alerts
  */
 
-const POLL_INTERVAL = parseInt(process.env.MARGIN_POLL_INTERVAL_MS, 10) || 60_000;
-const ALERT_COOLDOWN = 30 * 60 * 1000; // 30 min cooldown per zone transition
+function getEnvNumber(name, fallback) {
+  const raw = process.env[name];
+  if (raw == null || raw === '') return fallback;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+const POLL_INTERVAL = getEnvNumber('MARGIN_POLL_INTERVAL_MS', 60_000);
+const ALERT_COOLDOWN = getEnvNumber('MARGIN_ALERT_COOLDOWN_MS', 30 * 60 * 1000);
 
 // Margin zone thresholds
-const ZONE_DANGER = 150;
-const ZONE_CAUTION = 300;
+// Intentional hysteresis design:
+//   Guardian ACTIVATES when margin < 150% (ZONE_DANGER)
+//   Guardian DEACTIVATES only when margin > 300% (ZONE_CAUTION)
+//   Between 150%-300% after activation, Guardian stays ON to prevent premature
+//   recovery signals. This wide band ensures the user is truly safe before
+//   re-enabling order execution (which is hard-blocked by Guardian in telegram.js).
+//   "Safe zone" = margin > 300%.
+const rawDangerLevel = getEnvNumber('MARGIN_DANGER_LEVEL', 150);
+const rawSafeLevel = getEnvNumber('MARGIN_SAFE_LEVEL', 300);
+const ZONE_DANGER = rawDangerLevel;
+const ZONE_CAUTION = rawSafeLevel > rawDangerLevel ? rawSafeLevel : 300;
 
 function getZone(marginLevel) {
   if (marginLevel < ZONE_DANGER) return 'danger';
@@ -38,10 +54,21 @@ function startMarginMonitor({ authService, crmClient, guardianService, telegramB
 
   // Alert state: "platform:userId" → { lastZone, lastAlertTime, marginLevel }
   const alertStates = new Map();
+  const status = {
+    running: true,
+    pollIntervalMs: POLL_INTERVAL,
+    lastRunAt: null,
+    lastSuccessAt: null,
+    lastError: null,
+    lastScannedSessions: 0,
+  };
 
   async function pollAll() {
+    status.lastRunAt = new Date().toISOString();
+    status.lastScannedSessions = 0;
     for (const [sessionKey, session] of authService.sessions) {
       try {
+        status.lastScannedSessions += 1;
         // sessionKey format: "platform:userId"
         const [platform, ...userIdParts] = sessionKey.split(':');
         const userId = userIdParts.join(':');
@@ -86,8 +113,11 @@ function startMarginMonitor({ authService, crmClient, guardianService, telegramB
         alertState.lastZone = newZone;
         alertState.marginLevel = marginLevel;
         alertStates.set(sessionKey, alertState);
+        status.lastSuccessAt = new Date().toISOString();
+        status.lastError = null;
       } catch (err) {
         // Skip this user, continue loop — never crash the scheduler
+        status.lastError = err.message;
         console.warn(`[Margin Monitor] Error for ${sessionKey}:`, err.message);
       }
     }
@@ -129,7 +159,16 @@ function startMarginMonitor({ authService, crmClient, guardianService, telegramB
   const timer = setInterval(pollAll, POLL_INTERVAL);
   console.log(`\u2705 Margin monitor started (interval: ${POLL_INTERVAL / 1000}s)`);
 
-  return { timer, pollAll, alertStates };
+  return { timer, pollAll, alertStates, status };
 }
 
-module.exports = { startMarginMonitor };
+module.exports = {
+  startMarginMonitor,
+  getZone,
+  zoneWorsened,
+  getEnvNumber,
+  ZONE_DANGER,
+  ZONE_CAUTION,
+  POLL_INTERVAL,
+  ALERT_COOLDOWN,
+};

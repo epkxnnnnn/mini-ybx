@@ -3,21 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>YBX Assistant — Yellow Box Markets</title>
+  <title>Jerry — Yellow Box Markets</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
     :root {
-      --ybx-yellow: #FFD700;
-      --ybx-dark: #1a1a2e;
-      --ybx-darker: #16213e;
-      --ybx-accent: #0f3460;
-      --ybx-text: #e0e0e0;
-      --ybx-text-dim: #8a8a9a;
-      --ybx-green: #00c853;
-      --ybx-red: #ff1744;
-      --ybx-user-bg: #2a2a4a;
-      --ybx-bot-bg: #1e1e3a;
+      --ybx-yellow: #DCAA2E;
+      --ybx-dark: #0A0A0A;
+      --ybx-darker: #141414;
+      --ybx-accent: #1F1F1F;
+      --ybx-text: #F2F2F2;
+      --ybx-text-dim: #737373;
+      --ybx-green: #22C55E;
+      --ybx-red: #EF4444;
+      --ybx-user-bg: #262626;
+      --ybx-bot-bg: #1A1A1A;
     }
 
     body {
@@ -27,6 +27,96 @@
       height: 100vh;
       display: flex;
       flex-direction: column;
+    }
+
+    /* ===== Login Overlay ===== */
+    .login-overlay {
+      position: fixed;
+      inset: 0;
+      background: var(--ybx-dark);
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .login-overlay.hidden { display: none; }
+
+    .login-card {
+      background: var(--ybx-darker);
+      border: 1px solid rgba(220,170,46,0.2);
+      border-radius: 16px;
+      padding: 40px 32px;
+      width: 100%;
+      max-width: 380px;
+      text-align: center;
+    }
+
+    .login-logo {
+      width: 60px;
+      height: 60px;
+      background: var(--ybx-yellow);
+      border-radius: 14px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 900;
+      font-size: 24px;
+      color: var(--ybx-dark);
+      margin-bottom: 16px;
+    }
+
+    .login-card h2 {
+      color: var(--ybx-yellow);
+      font-size: 20px;
+      margin-bottom: 6px;
+    }
+
+    .login-card p {
+      color: var(--ybx-text-dim);
+      font-size: 13px;
+      margin-bottom: 24px;
+    }
+
+    .login-field {
+      width: 100%;
+      background: var(--ybx-accent);
+      color: var(--ybx-text);
+      border: 1px solid rgba(220,170,46,0.15);
+      border-radius: 10px;
+      padding: 12px 14px;
+      font-size: 14px;
+      font-family: inherit;
+      outline: none;
+      margin-bottom: 12px;
+      transition: border-color 0.2s;
+    }
+
+    .login-field:focus { border-color: var(--ybx-yellow); }
+    .login-field::placeholder { color: var(--ybx-text-dim); }
+
+    .login-btn {
+      width: 100%;
+      background: var(--ybx-yellow);
+      color: var(--ybx-dark);
+      border: none;
+      border-radius: 10px;
+      padding: 12px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      margin-top: 8px;
+      transition: opacity 0.2s;
+    }
+
+    .login-btn:hover { opacity: 0.9; }
+    .login-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .login-error {
+      color: var(--ybx-red);
+      font-size: 13px;
+      margin-top: 12px;
+      min-height: 18px;
     }
 
     /* Header */
@@ -63,8 +153,20 @@
       color: var(--ybx-text-dim);
     }
 
-    .header-actions {
+    .header-member {
       margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .member-name {
+      font-size: 13px;
+      color: var(--ybx-yellow);
+      font-weight: 600;
+    }
+
+    .header-actions {
       display: flex;
       gap: 8px;
     }
@@ -72,7 +174,7 @@
     .header-btn {
       background: var(--ybx-accent);
       color: var(--ybx-text);
-      border: 1px solid rgba(255,215,0,0.2);
+      border: 1px solid rgba(220,170,46,0.2);
       padding: 6px 12px;
       border-radius: 6px;
       font-size: 12px;
@@ -97,9 +199,9 @@
     }
 
     .quick-btn {
-      background: rgba(255,215,0,0.1);
+      background: rgba(220,170,46,0.1);
       color: var(--ybx-yellow);
-      border: 1px solid rgba(255,215,0,0.2);
+      border: 1px solid rgba(220,170,46,0.2);
       padding: 5px 12px;
       border-radius: 16px;
       font-size: 12px;
@@ -202,7 +304,7 @@
       flex: 1;
       background: var(--ybx-accent);
       color: var(--ybx-text);
-      border: 1px solid rgba(255,215,0,0.15);
+      border: 1px solid rgba(220,170,46,0.15);
       border-radius: 12px;
       padding: 10px 14px;
       font-size: 14px;
@@ -284,41 +386,63 @@
     @media (max-width: 600px) {
       .header-actions { display: none; }
       .message { max-width: 92%; }
+      .login-card { margin: 0 16px; padding: 32px 20px; }
     }
   </style>
 </head>
 <body>
 
+  <!-- Login Overlay -->
+  <div class="login-overlay" id="loginOverlay">
+    <div class="login-card">
+      <div class="login-logo">YBX</div>
+      <h2>Jerry</h2>
+      <p>Yellow Box Markets — Jerry AI Trading Analyst<br>กรุณาเข้าสู่ระบบเพื่อใช้งาน</p>
+      <input type="email" class="login-field" id="loginEmail" placeholder="อีเมล" autocomplete="email"
+        onkeydown="if(event.key==='Enter'){document.getElementById('loginPassword').focus();}">
+      <input type="password" class="login-field" id="loginPassword" placeholder="รหัสผ่าน" autocomplete="current-password"
+        onkeydown="if(event.key==='Enter'){handleLogin();}">
+      <button class="login-btn" id="loginBtn" onclick="handleLogin()">เข้าสู่ระบบ</button>
+      <div class="login-error" id="loginError"></div>
+    </div>
+  </div>
+
   <!-- Header -->
   <div class="header">
     <div class="header-logo">YBX</div>
     <div class="header-info">
-      <h1>YBX Assistant</h1>
-      <p>Yellow Box Markets — ENGULF-X AI Trading</p>
+      <h1>Jerry</h1>
+      <p>Yellow Box Markets — Jerry AI Trading Analyst</p>
     </div>
-    <div class="header-actions">
-      <button class="header-btn" onclick="resetChat()">🔄 Reset</button>
+    <div class="header-member">
+      <span class="member-name" id="memberName"></span>
+      <div class="header-actions">
+        <button class="header-btn" onclick="resetChat()">🔄 Reset</button>
+        <button class="header-btn" onclick="handleLogout()">🚪 Logout</button>
+      </div>
     </div>
   </div>
 
   <!-- Quick Actions -->
   <div class="quick-actions">
-    <button class="quick-btn" onclick="sendQuick('วิเคราะห์ XAUUSD ให้หน่อย')">📊 วิเคราะห์ทอง</button>
-    <button class="quick-btn" onclick="sendQuick('เช็คลิสต์ 5 ขั้นตอน ENGULF-X คืออะไร?')">📋 เช็คลิสต์</button>
-    <button class="quick-btn" onclick="sendQuick('อธิบาย MAJOR vs MINOR Structure')">🔍 MAJOR/MINOR</button>
-    <button class="quick-btn" onclick="sendQuick('Zone Priority มีอะไรบ้าง?')">⭐ Zone Priority</button>
-    <button class="quick-btn" onclick="sendQuick('กฎ 1%/2% อัตโนมัติคืออะไร?')">⚡ กฎ 1%/2%</button>
-    <button class="quick-btn" onclick="sendQuick('KF (ข้ามฟาก) คืออะไร?')">🔀 KF Zone</button>
-    <button class="quick-btn" onclick="sendQuick('วิธีเปิดบัญชี Yellow Box Markets')">🏦 เปิดบัญชี</button>
+    <button class="quick-btn" onclick="sendQuick('/price xauusd')">📊 ราคาทอง</button>
+    <button class="quick-btn" onclick="sendQuick('/analyze xauusd')">📈 วิเคราะห์</button>
+    <button class="quick-btn" onclick="sendQuick('/news')">📰 ข่าว</button>
+    <button class="quick-btn" onclick="sendQuick('/levels xauusd')">📍 แนวรับแนวต้าน</button>
+    <button class="quick-btn" onclick="sendQuick('/rate')">💱 อัตราแลกเปลี่ยน</button>
+    <button class="quick-btn" onclick="sendQuick('/profile')">👤 โปรไฟล์</button>
+    <button class="quick-btn" onclick="sendQuick('/account')">💼 บัญชีเทรด</button>
+    <button class="quick-btn" onclick="sendQuick('/checklist')">📋 เช็คลิสต์</button>
+    <button class="quick-btn" onclick="sendQuick('/zones')">⭐ Zone Priority</button>
   </div>
 
   <!-- Chat Area -->
   <div class="chat-area" id="chatArea">
-    <div class="welcome">
-      <h2>🟡 ยินดีต้อนรับสู่ YBX Assistant</h2>
+    <div class="welcome" id="welcomeMsg">
+      <h2>🟡 ยินดีต้อนรับสู่ Jerry</h2>
       <p>
         ผมคือผู้ช่วย AI ของ Yellow Box Markets<br>
-        เชี่ยวชาญด้านกลยุทธ์ ENGULF-X<br><br>
+        เชี่ยวชาญด้านการวิเคราะห์ตลาดครบวงจร<br><br>
         📊 วิเคราะห์ตลาด &nbsp;|&nbsp; 📚 สอนกลยุทธ์ &nbsp;|&nbsp; 💬 สนับสนุนลูกค้า<br><br>
         พิมพ์ข้อความหรือกดปุ่มด้านบนเพื่อเริ่มต้น!
       </p>
@@ -339,38 +463,158 @@
   </div>
 
   <script>
-    const API_URL = '/api/chat';
-    const RESET_URL = '/api/reset';
-    const userId = 'web_' + Math.random().toString(36).substring(2, 10);
-    let isLoading = false;
+    var API_URL = '/api/chat';
+    var RESET_URL = '/api/reset';
+    var sessionToken = localStorage.getItem('ybx_sessionToken') || null;
+    var isLoading = false;
+    var memberData = null;
 
-    // Check health
-    async function checkHealth() {
-      try {
-        const res = await fetch('/api/health');
-        if (res.ok) {
-          document.getElementById('statusDot').className = 'status-dot online';
-          document.getElementById('statusText').textContent = 'Online — ENGULF-X AI Ready';
-        }
-      } catch {
-        document.getElementById('statusDot').className = 'status-dot offline';
-        document.getElementById('statusText').textContent = 'Offline — Server not running';
+    /**
+     * Build auth headers using server-issued session token
+     */
+    function authHeaders() {
+      var h = { 'Content-Type': 'application/json' };
+      if (sessionToken) h['Authorization'] = 'Bearer ' + sessionToken;
+      return h;
+    }
+
+    // ========== Auth ==========
+
+    function checkSession() {
+      if (!sessionToken) { showLogin(); return; }
+      fetch('/api/auth/session', { headers: authHeaders() })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+          if (data.authenticated) {
+            memberData = data.member;
+            showChat();
+          } else {
+            clearSession();
+            showLogin();
+          }
+        })
+        .catch(function() { showLogin(); });
+    }
+
+    function clearSession() {
+      sessionToken = null;
+      localStorage.removeItem('ybx_sessionToken');
+      memberData = null;
+    }
+
+    function handleLogin() {
+      var email = document.getElementById('loginEmail').value.trim();
+      var password = document.getElementById('loginPassword').value;
+      var errorEl = document.getElementById('loginError');
+      var btn = document.getElementById('loginBtn');
+
+      if (!email || !password) {
+        errorEl.textContent = 'กรุณากรอกอีเมลและรหัสผ่าน';
+        return;
       }
+
+      btn.disabled = true;
+      btn.textContent = 'กำลังเข้าสู่ระบบ...';
+      errorEl.textContent = '';
+
+      fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email, password: password }),
+      })
+        .then(function(res) {
+          return res.json().then(function(data) { return { ok: res.ok, data: data }; });
+        })
+        .then(function(result) {
+          if (result.ok && result.data.success) {
+            sessionToken = result.data.sessionToken;
+            localStorage.setItem('ybx_sessionToken', sessionToken);
+            memberData = result.data.member;
+            showChat();
+          } else {
+            errorEl.textContent = result.data.error || 'เข้าสู่ระบบไม่สำเร็จ';
+          }
+          btn.disabled = false;
+          btn.textContent = 'เข้าสู่ระบบ';
+        })
+        .catch(function() {
+          errorEl.textContent = 'ไม่สามารถเชื่อมต่อ Server ได้';
+          btn.disabled = false;
+          btn.textContent = 'เข้าสู่ระบบ';
+        });
+    }
+
+    function handleLogout() {
+      fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: authHeaders(),
+      }).catch(function() {});
+
+      clearSession();
+      resetChatArea();
+      showLogin();
+    }
+
+    function showLogin() {
+      document.getElementById('loginOverlay').classList.remove('hidden');
+      document.getElementById('loginEmail').value = '';
+      document.getElementById('loginPassword').value = '';
+      document.getElementById('loginError').textContent = '';
+      document.getElementById('loginEmail').focus();
+    }
+
+    function showChat() {
+      document.getElementById('loginOverlay').classList.add('hidden');
+      if (memberData) {
+        document.getElementById('memberName').textContent = memberData.name || '';
+      }
+      document.getElementById('messageInput').focus();
+    }
+
+    // Check session on page load
+    checkSession();
+
+    // Health check
+    function checkHealth() {
+      fetch('/api/health')
+        .then(function(res) {
+          if (res.ok) {
+            document.getElementById('statusDot').className = 'status-dot online';
+            document.getElementById('statusText').textContent = 'Online — Jerry AI Ready';
+          }
+        })
+        .catch(function() {
+          document.getElementById('statusDot').className = 'status-dot offline';
+          document.getElementById('statusText').textContent = 'Offline — Server not running';
+        });
     }
     checkHealth();
     setInterval(checkHealth, 30000);
 
+    // ========== Chat ==========
+
     function addMessage(text, sender) {
-      const chatArea = document.getElementById('chatArea');
+      var chatArea = document.getElementById('chatArea');
       // Remove welcome
-      const welcome = chatArea.querySelector('.welcome');
+      var welcome = chatArea.querySelector('.welcome');
       if (welcome) welcome.remove();
 
-      const msg = document.createElement('div');
-      msg.className = `message ${sender}`;
+      var msg = document.createElement('div');
+      msg.className = 'message ' + sender;
 
       if (sender === 'bot') {
-        msg.innerHTML = `<div class="bot-label">YBX Assistant</div>${escapeHtml(text)}`;
+        var label = document.createElement('div');
+        label.className = 'bot-label';
+        label.textContent = 'Jerry';
+        msg.appendChild(label);
+        // Render text safely: split by newlines and create text nodes + <br>
+        var lines = text.split('\n');
+        for (var i = 0; i < lines.length; i++) {
+          msg.appendChild(document.createTextNode(lines[i]));
+          if (i < lines.length - 1) {
+            msg.appendChild(document.createElement('br'));
+          }
+        }
       } else {
         msg.textContent = text;
       }
@@ -381,34 +625,35 @@
     }
 
     function showTyping() {
-      const chatArea = document.getElementById('chatArea');
-      const typing = document.createElement('div');
+      var chatArea = document.getElementById('chatArea');
+      var typing = document.createElement('div');
       typing.className = 'message typing';
       typing.id = 'typingIndicator';
-      typing.innerHTML = `
-        <div class="bot-label">YBX Assistant</div>
-        <div class="typing-dots"><span></span><span></span><span></span></div>
-      `;
+
+      var label = document.createElement('div');
+      label.className = 'bot-label';
+      label.textContent = 'Jerry';
+      typing.appendChild(label);
+
+      var dots = document.createElement('div');
+      dots.className = 'typing-dots';
+      for (var i = 0; i < 3; i++) {
+        dots.appendChild(document.createElement('span'));
+      }
+      typing.appendChild(dots);
+
       chatArea.appendChild(typing);
       chatArea.scrollTop = chatArea.scrollHeight;
     }
 
     function hideTyping() {
-      const el = document.getElementById('typingIndicator');
+      var el = document.getElementById('typingIndicator');
       if (el) el.remove();
     }
 
-    function escapeHtml(text) {
-      return text
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/\n/g, '<br>');
-    }
-
-    async function sendMessage() {
-      const input = document.getElementById('messageInput');
-      const text = input.value.trim();
+    function sendMessage() {
+      var input = document.getElementById('messageInput');
+      var text = input.value.trim();
       if (!text || isLoading) return;
 
       isLoading = true;
@@ -419,29 +664,39 @@
       addMessage(text, 'user');
       showTyping();
 
-      try {
-        const res = await fetch(API_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: text, userId, userName: 'Web User' }),
-        });
-
-        hideTyping();
-
-        if (res.ok) {
-          const data = await res.json();
-          addMessage(data.reply, 'bot');
-        } else {
+      fetch(API_URL, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ message: text, userName: memberData ? memberData.name : 'Web User' }),
+      })
+        .then(function(res) {
+          hideTyping();
+          if (res.status === 401) {
+            return res.json().then(function(data) {
+              if (data.requiresLogin) {
+                addMessage('🔒 Session หมดอายุ กรุณาเข้าสู่ระบบใหม่', 'bot');
+                clearSession();
+                showLogin();
+              }
+              return null;
+            });
+          }
+          if (res.ok) {
+            return res.json().then(function(data) {
+              addMessage(data.reply, 'bot');
+            });
+          }
           addMessage('❌ เกิดข้อผิดพลาด กรุณาลองใหม่ครับ', 'bot');
-        }
-      } catch (err) {
-        hideTyping();
-        addMessage('❌ ไม่สามารถเชื่อมต่อ Server ได้ กรุณาตรวจสอบว่า Server กำลังทำงาน', 'bot');
-      }
-
-      isLoading = false;
-      document.getElementById('sendBtn').disabled = false;
-      input.focus();
+        })
+        .catch(function() {
+          hideTyping();
+          addMessage('❌ ไม่สามารถเชื่อมต่อ Server ได้ กรุณาตรวจสอบว่า Server กำลังทำงาน', 'bot');
+        })
+        .finally(function() {
+          isLoading = false;
+          document.getElementById('sendBtn').disabled = false;
+          input.focus();
+        });
     }
 
     function sendQuick(text) {
@@ -449,27 +704,26 @@
       sendMessage();
     }
 
-    async function resetChat() {
-      try {
-        await fetch(RESET_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId }),
-        });
-      } catch {}
+    function resetChatArea() {
+      var chatArea = document.getElementById('chatArea');
+      chatArea.textContent = '';
+      var welcome = document.createElement('div');
+      welcome.className = 'welcome';
+      var h2 = document.createElement('h2');
+      h2.textContent = '🟡 ยินดีต้อนรับสู่ Jerry';
+      var p = document.createElement('p');
+      p.textContent = 'ผมคือ Jerry — AI Trading Analyst ของ Yellow Box Markets';
+      welcome.appendChild(h2);
+      welcome.appendChild(p);
+      chatArea.appendChild(welcome);
+    }
 
-      const chatArea = document.getElementById('chatArea');
-      chatArea.innerHTML = `
-        <div class="welcome">
-          <h2>🟡 ยินดีต้อนรับสู่ YBX Assistant</h2>
-          <p>
-            ผมคือผู้ช่วย AI ของ Yellow Box Markets<br>
-            เชี่ยวชาญด้านกลยุทธ์ ENGULF-X<br><br>
-            📊 วิเคราะห์ตลาด &nbsp;|&nbsp; 📚 สอนกลยุทธ์ &nbsp;|&nbsp; 💬 สนับสนุนลูกค้า<br><br>
-            พิมพ์ข้อความหรือกดปุ่มด้านบนเพื่อเริ่มต้น!
-          </p>
-        </div>
-      `;
+    function resetChat() {
+      fetch(RESET_URL, {
+        method: 'POST',
+        headers: authHeaders(),
+      }).catch(function() {});
+      resetChatArea();
     }
 
     function handleKeydown(e) {

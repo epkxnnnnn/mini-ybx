@@ -9,23 +9,24 @@ const { generateSignal } = require("./services/signal-service");
 
 // Load system prompt
 const SYSTEM_PROMPT = fs.readFileSync(
-  path.join(__dirname, "engulfx-system-prompt.md"),
+  path.join(__dirname, "system-prompt.md"),
   "utf-8"
 );
 
 // General Jerry prompt (lighter version for non-member channels)
-const GENERAL_PROMPT = `คุณคือ Jerry — ผู้ช่วย AI การเทรดของ Yellow Box Markets (YBX)
+const GENERAL_PROMPT = `คุณคือ Jerry — AI Trading Analyst ของ Yellow Box Markets (YBX)
 
 # บทบาทของคุณ
-คุณช่วยเทรดเดอร์วิเคราะห์ตลาดและให้จุด Entry, TP (Take Profit), SL (Stop Loss) ที่ชัดเจน พร้อมคำนวณ Risk:Reward Ratio
+คุณเป็นผู้เชี่ยวชาญด้านการวิเคราะห์ตลาดการเงินแบบครบวงจร ช่วยเทรดเดอร์วิเคราะห์ตลาดและให้จุด Entry, TP (Take Profit), SL (Stop Loss) ที่ชัดเจน พร้อมคำนวณ Risk:Reward Ratio
 
 # สิ่งที่คุณทำได้
 - วิเคราะห์ตลาด Forex, ทองคำ (XAUUSD), Crypto, ดัชนี, สินค้าโภคภัณฑ์
-- ให้จุดเข้าเทรด Entry, TP, SL พร้อมเหตุผลจาก Technical Analysis
+- ให้จุดเข้าเทรด Entry, TP, SL พร้อมเหตุผลจาก Technical & Fundamental Analysis
 - คำนวณ R:R (Risk:Reward) ทุกครั้ง
 - คำนวณ Lot Size ตามทุนและความเสี่ยงที่ยอมรับได้
-- อธิบาย Technical Analysis (แนวรับ/แนวต้าน, candlestick patterns, trend lines, Fibonacci)
-- อธิบาย Fundamental Analysis (ข่าวเศรษฐกิจ, ปฏิทินเศรษฐกิจ, ผลกระทบต่อราคา)
+- อธิบาย Technical Analysis (แนวรับ/แนวต้าน, candlestick patterns, indicators, Fibonacci, market structure)
+- อธิบาย Fundamental Analysis (ข่าวเศรษฐกิจ, นโยบายธนาคารกลาง, ความสัมพันธ์ระหว่างตลาด)
+- วิเคราะห์ Sentiment (COT data, Fear & Greed, market positioning)
 - แนะนำการบริหารความเสี่ยง (Risk Management)
 
 # รูปแบบ Trade Signal
@@ -64,13 +65,15 @@ const GUARDIAN_MODE_PROMPT = `
 `;
 
 class YBXAIEngine {
-  constructor() {
+  constructor(options = {}) {
     this.client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     this.model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
     this.summaryModel = "gemini-2.5-flash-lite";
+    this.repo = options.repo || null;
     // Per-user conversation history (keyed by platform:userId)
-    this.conversations = new Map();
-    this.summaries = new Map();
+    this.conversations = options.conversations || new Map();
+    this.summaries = options.summaries || new Map();
+    this.lastTradeSetups = options.lastTradeSetups || new Map();
     this.maxHistory = 20; // keep last 20 messages per user
     this.summarizeThreshold = 20; // summarize when history exceeds this
 
@@ -95,6 +98,20 @@ class YBXAIEngine {
     return `${platform}:${userId}`;
   }
 
+  _persist(namespace, key, value) {
+    if (!this.repo) return;
+    this.repo.set(namespace, key, value).catch((err) => {
+      console.error(`AI state persist failed [${namespace}:${key}]:`, err.message);
+    });
+  }
+
+  _deletePersisted(namespace, key) {
+    if (!this.repo) return;
+    this.repo.delete(namespace, key).catch((err) => {
+      console.error(`AI state delete failed [${namespace}:${key}]:`, err.message);
+    });
+  }
+
   /**
    * Get or create conversation history for a user
    */
@@ -102,6 +119,7 @@ class YBXAIEngine {
     const key = this._key(platform, userId);
     if (!this.conversations.has(key)) {
       this.conversations.set(key, []);
+      this._persist("ai:conversations", key, []);
     }
     return this.conversations.get(key);
   }
@@ -110,6 +128,7 @@ class YBXAIEngine {
    * Trim history — summarize oldest messages when exceeding threshold
    */
   async _trimHistory(history, platform, userId) {
+    const key = this._key(platform, userId);
     if (history.length > this.summarizeThreshold) {
       // Take oldest 10 messages to summarize
       const toSummarize = history.splice(0, 10);
@@ -119,6 +138,7 @@ class YBXAIEngine {
     while (history.length > this.maxHistory) {
       history.shift();
     }
+    this._persist("ai:conversations", key, history);
   }
 
   /**
@@ -155,6 +175,7 @@ class YBXAIEngine {
           ? `${existing}\n${summary}`.slice(-500)
           : summary;
         this.summaries.set(key, combined);
+        this._persist("ai:summaries", key, combined);
       }
     } catch (err) {
       console.error("Summarization error:", err.message);
@@ -270,6 +291,17 @@ class YBXAIEngine {
     return null;
   }
 
+  shouldCaptureTradeSetup(text) {
+    if (!text) return false;
+    const lower = text.toLowerCase();
+    const keywords = [
+      'วิเคราะห์', 'analysis', 'analyze', 'setup', 'signal', 'entry',
+      'sl', 'tp', 'buy', 'sell', 'long', 'short', 'trade', 'เทรด',
+      'เข้า', 'จุดเข้า', 'จุดซื้อ', 'จุดขาย',
+    ];
+    return keywords.some((keyword) => lower.includes(keyword));
+  }
+
   /**
    * Build enriched price context string
    */
@@ -367,6 +399,7 @@ class YBXAIEngine {
     let priceContext = "";
     let analysisContext = "";
     let signalContext = "";
+    let structuredSetup = null;
     const symbol = this.detectSymbol(userMessage);
 
     if (symbol) {
@@ -391,6 +424,7 @@ class YBXAIEngine {
             analysis.value.sweeps
           );
           if (signal) {
+            structuredSetup = signal;
             signalContext = `\n[AI Signal: ${signal.symbol} — ${signal.direction}, Confidence ${signal.confidence}%, Entry $${signal.entry}, SL $${signal.sl}, TP $${signal.tp}, R:R ${signal.riskReward}]`;
           }
         } catch (err) {
@@ -402,6 +436,7 @@ class YBXAIEngine {
     // Add user message to history (with enriched data)
     const enrichedMessage = userMessage + priceContext + analysisContext + signalContext;
     history.push({ role: "user", content: enrichedMessage });
+    this._persist("ai:conversations", key, history);
     await this._trimHistory(history, platform, userId);
 
     try {
@@ -438,7 +473,20 @@ class YBXAIEngine {
 
       // Add assistant response to history
       history.push({ role: "assistant", content: assistantMessage });
+      this._persist("ai:conversations", key, history);
       await this._trimHistory(history, platform, userId);
+
+      if (structuredSetup && this.shouldCaptureTradeSetup(userMessage)) {
+        const setup = {
+          ...structuredSetup,
+          capturedAt: Date.now(),
+        };
+        this.lastTradeSetups.set(key, setup);
+        this._persist("ai:last-trade-setups", key, setup);
+      } else {
+        this.lastTradeSetups.delete(key);
+        this._deletePersisted("ai:last-trade-setups", key);
+      }
 
       return assistantMessage;
     } catch (err) {
@@ -459,6 +507,14 @@ class YBXAIEngine {
     const key = this._key(platform, userId);
     this.conversations.delete(key);
     this.summaries.delete(key);
+    this.lastTradeSetups.delete(key);
+    this._deletePersisted("ai:conversations", key);
+    this._deletePersisted("ai:summaries", key);
+    this._deletePersisted("ai:last-trade-setups", key);
+  }
+
+  getLastTradeSetup(platform, userId) {
+    return this.lastTradeSetups.get(this._key(platform, userId)) || null;
   }
 }
 
