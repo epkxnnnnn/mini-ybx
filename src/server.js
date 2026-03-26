@@ -16,7 +16,6 @@ const StateRepository = require("./services/state-repository");
 const ExecutionAuditService = require("./services/execution-audit-service");
 const { createRequestId, log } = require("./services/logger");
 const { generateSignal, generateSignalForSymbol, AI_SIGNAL_SYMBOLS } = require("./services/signal-service");
-const { calculatePortfolio } = require("./services/portfolio-service");
 const { normalizeTick } = require("./services/market-data-service");
 const { startMarginMonitor } = require("./jobs/margin-monitor");
 const { startPositionMonitor, normalizePosition } = require("./jobs/position-monitor");
@@ -429,18 +428,27 @@ app.get("/api/webapp/prices", async (req, res) => {
 
 // Market Analysis — parallel fetch for a symbol
 app.get("/api/webapp/analysis/:symbol", async (req, res) => {
-  if (!crmClient) {
-    return res.status(503).json({ error: "CRM not configured" });
-  }
+  const session = await getMemberSession(req);
+  if (!session) return res.status(401).json({ error: "Please login first" });
+  if (!crmClient) return res.status(503).json({ error: "CRM not configured" });
+
   const symbol = req.params.symbol.toUpperCase();
   try {
-    const [structure, htfBias, keyLevels, sweeps] = await Promise.all([
-      crmClient.getMarketStructure(symbol).catch(() => null),
-      crmClient.getHtfBias(symbol).catch(() => null),
-      crmClient.getKeyLevels(symbol).catch(() => null),
-      crmClient.getLiquiditySweeps(symbol).catch(() => null),
-    ]);
-    res.json({ symbol, structure, htfBias, keyLevels, sweeps });
+    const payload = await crmClient.getMemberMarketAnalysis(
+      session.accessToken,
+      String(req.query.locale || "th")
+    );
+    const analyses = unwrapApiData(payload);
+    const list = Array.isArray(analyses)
+      ? analyses
+      : Array.isArray(analyses?.items)
+        ? analyses.items
+        : [];
+    const analysis = list.find((item) => String(item.symbol || "").toUpperCase() === symbol);
+    if (!analysis) {
+      return res.status(404).json({ error: "Analysis not found for symbol" });
+    }
+    res.json(analysis);
   } catch (err) {
     console.error("WebApp analysis error:", err.message);
     res.status(500).json({ error: "Failed to fetch analysis" });
@@ -484,19 +492,38 @@ app.get("/api/webapp/profile", async (req, res) => {
   const tgUserId = req.telegramUser.id;
   const session = await authService.getSession("telegram", tgUserId);
   if (session) {
-    // Include account data for premium access check (shareholder or $100k+)
-    const accts = session.accountData;
-    const accounts = Array.isArray(accts) ? accts : (accts?.accounts || (accts ? [accts] : []));
-    const totalBalance = accounts.reduce((sum, a) => sum + (parseFloat(a.balance) || 0), 0);
-    res.json({
-      authenticated: true,
-      member: session.memberData,
-      totalBalance,
-      premiumAccess: (session.memberData.tier || '').toLowerCase().includes('shareholder') || totalBalance >= 100000,
-    });
-  } else {
-    res.json({ authenticated: false });
+    try {
+      const [profilePayload, accountsPayload] = await Promise.all([
+        crmClient ? crmClient.getMemberProfile(session.accessToken).catch(() => null) : null,
+        crmClient ? crmClient.getMemberAccounts(session.accessToken).catch(() => null) : null,
+      ]);
+      const member = unwrapApiData(profilePayload) || session.memberData;
+      const accountsData = unwrapApiData(accountsPayload);
+      const accounts = Array.isArray(accountsData)
+        ? accountsData
+        : Array.isArray(accountsData?.items)
+          ? accountsData.items
+          : Array.isArray(accountsData?.accounts)
+            ? accountsData.accounts
+            : [];
+      const totalBalance = accounts.reduce((sum, a) => sum + (parseFloat(a.balance) || 0), 0);
+      return res.json({
+        authenticated: true,
+        member,
+        totalBalance,
+        premiumAccess: String(member?.tier || '').toLowerCase().includes('shareholder') || totalBalance >= 100000,
+      });
+    } catch (err) {
+      console.error("WebApp profile error:", err.message);
+      return res.json({
+        authenticated: true,
+        member: session.memberData,
+        totalBalance: 0,
+        premiumAccess: String(session.memberData?.tier || '').toLowerCase().includes('shareholder'),
+      });
+    }
   }
+  res.json({ authenticated: false });
 });
 
 // Mini App — Login directly from webapp
@@ -548,6 +575,61 @@ app.post("/api/webapp/logout", async (req, res) => {
 function getMemberSession(req) {
   if (!authService || !req.telegramUser) return null;
   return authService.getSession("telegram", req.telegramUser.id);
+}
+
+function unwrapApiData(payload) {
+  if (payload && typeof payload === "object" && "data" in payload && payload.data !== undefined) {
+    return payload.data;
+  }
+  return payload;
+}
+
+function toMiniSignalDetailPayload(signal) {
+  if (!signal || typeof signal !== "object") return null;
+
+  const symbol = String(signal.symbol || "").toUpperCase();
+  if (!symbol) return null;
+
+  const direction = String(signal.direction || signal.side || "").toUpperCase();
+  const normalizedDirection = direction === "SELL" ? "Sell" : direction === "BUY" ? "Buy" : "Hold";
+  const confidence = Number(signal.confidence || 0);
+  const timeframe = signal.timeframe || "H4";
+  const entryPrice = Number(signal.entryPrice ?? signal.entry ?? 0);
+  const stopLoss = Number(signal.stopLoss ?? signal.sl ?? 0);
+  const takeProfit1 = Number(signal.takeProfit1 ?? signal.tp ?? 0);
+  const riskRewardRaw = String(signal.riskRewardRatio ?? signal.riskReward ?? "").replace(/^1:/, "");
+  const riskRewardRatio = Number(riskRewardRaw || 0);
+
+  return {
+    id: signal.id || `${symbol}-${normalizedDirection}-${timeframe}`,
+    symbol,
+    direction: normalizedDirection,
+    confidence,
+    entryPrice,
+    stopLoss,
+    takeProfit1,
+    takeProfit2: signal.takeProfit2 != null ? Number(signal.takeProfit2) : null,
+    takeProfit3: signal.takeProfit3 != null ? Number(signal.takeProfit3) : null,
+    riskRewardRatio,
+    timeframe,
+    analysis: signal.analysis || "",
+    technicalFactors: Array.isArray(signal.technicalFactors) ? signal.technicalFactors : [],
+    fundamentalFactors: Array.isArray(signal.fundamentalFactors) ? signal.fundamentalFactors : [],
+    validUntil: signal.validUntil || new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    status: signal.status || "Active",
+    result: signal.result || null,
+    createdAt: signal.createdAt || new Date().toISOString(),
+    updatedAt: signal.updatedAt || new Date().toISOString(),
+  };
+}
+
+function getAccountOpenPositionCount(account) {
+  if (!account || typeof account !== "object") return 0;
+  const direct = Array.isArray(account.openPositions) ? account.openPositions.length : 0;
+  if (direct > 0) return direct;
+  const nested = Array.isArray(account.positions) ? account.positions.length : 0;
+  if (nested > 0) return nested;
+  return Number(account.openPositionsCount || account.positionCount || account.positionsCount || 0);
 }
 
 // Member trading accounts
@@ -722,13 +804,21 @@ app.get("/api/webapp/ai-signals", async (req, res) => {
   if (!crmClient) return res.status(503).json({ error: "CRM not configured" });
 
   try {
-    const results = await Promise.all(
-      AI_SIGNAL_SYMBOLS.map((symbol) => generateSignalForSymbol(crmClient, symbol))
-    );
-    res.json({ signals: results.filter(Boolean) });
+    const payload = await crmClient.getMemberAiSignals(session.accessToken, {
+      status: String(req.query.status || "Active"),
+      locale: String(req.query.locale || "th"),
+    });
+    const signals = unwrapApiData(payload);
+    res.json({
+      signals: Array.isArray(signals)
+        ? signals
+        : Array.isArray(signals?.items)
+          ? signals.items
+          : [],
+    });
   } catch (err) {
     console.error("AI signals error:", err.message);
-    res.status(500).json({ error: "Failed to generate signals" });
+    res.status(500).json({ error: "Failed to fetch AI signals" });
   }
 });
 
@@ -740,11 +830,94 @@ app.get("/api/webapp/portfolio", async (req, res) => {
   if (!crmClient) return res.status(503).json({ error: "CRM not configured" });
 
   try {
-    const portfolio = await calculatePortfolio(crmClient, session.accessToken);
-    res.json(portfolio);
+    const accountsPayload = await crmClient.getMemberAccounts(session.accessToken);
+    const accounts = unwrapApiData(accountsPayload);
+    const accountList = Array.isArray(accounts)
+      ? accounts
+      : Array.isArray(accounts?.items)
+        ? accounts.items
+        : Array.isArray(accounts?.accounts)
+          ? accounts.accounts
+          : [];
+
+    if (!accountList.length) {
+      return res.json({
+        accounts: [],
+        selectedAccountId: null,
+        riskPanel: null,
+        advice: null,
+      });
+    }
+
+    const requestedId = String(req.query.accountId || "");
+    const accountWithPositions = accountList.find((account) => getAccountOpenPositionCount(account) > 0);
+    const selectedAccount = accountList.find((account) => String(account.id) === requestedId)
+      || accountWithPositions
+      || accountList[0];
+    const selectedAccountId = String(selectedAccount.id);
+    const locale = String(req.query.locale || "th");
+
+    const [riskPanelPayload, advicePayload, positionsPayload] = await Promise.all([
+      crmClient.getMemberRiskPanel(session.accessToken, selectedAccountId),
+      crmClient.generateMemberPortfolioAdvice(session.accessToken, selectedAccountId, locale),
+      crmClient.getAccountPositions(session.accessToken, selectedAccountId).catch(() => null),
+    ]);
+
+    const riskPanel = unwrapApiData(riskPanelPayload);
+    const advice = unwrapApiData(advicePayload);
+    const positionsData = unwrapApiData(positionsPayload);
+    const positions = Array.isArray(positionsData)
+      ? positionsData
+      : Array.isArray(positionsData?.items)
+        ? positionsData.items
+        : Array.isArray(positionsData?.positions)
+          ? positionsData.positions
+          : Array.isArray(selectedAccount.openPositions)
+            ? selectedAccount.openPositions
+            : Array.isArray(selectedAccount.positions)
+              ? selectedAccount.positions
+              : [];
+
+    res.json({
+      accounts: accountList,
+      selectedAccountId,
+      riskPanel,
+      advice,
+      totalBalance: Number(riskPanel?.balance || selectedAccount.balance || 0),
+      totalEquity: Number(riskPanel?.equity || selectedAccount.equity || selectedAccount.balance || 0),
+      freeMargin: Number(riskPanel?.freeMargin || selectedAccount.freeMargin || 0),
+      healthScore: Number(advice?.overallScore || 0),
+      positions,
+      recommendations: Array.isArray(advice?.recommendations)
+        ? advice.recommendations.map((rec) => rec.title || rec.description).filter(Boolean)
+        : [],
+    });
   } catch (err) {
     console.error("Portfolio error:", err.message);
     res.status(500).json({ error: "Failed to fetch portfolio" });
+  }
+});
+
+app.post("/api/webapp/signal-detail", async (req, res) => {
+  const session = await getMemberSession(req);
+  if (!session) return res.status(401).json({ error: "Please login first" });
+  if (!crmClient) return res.status(503).json({ error: "CRM not configured" });
+
+  try {
+    const signal = toMiniSignalDetailPayload(req.body && req.body.signal);
+    if (!signal) {
+      return res.status(400).json({ error: "signal required" });
+    }
+
+    const detail = await crmClient.generateMemberSignalDetail(
+      session.accessToken,
+      signal,
+      String(req.query.locale || "th")
+    );
+    res.json(unwrapApiData(detail));
+  } catch (err) {
+    console.error("Signal detail error:", err.message);
+    res.status(500).json({ error: "Failed to fetch signal detail" });
   }
 });
 
@@ -801,6 +974,36 @@ app.get("/api/webapp/notifications", async (req, res) => {
   } catch (err) {
     console.error("WebApp notifications error:", err.message);
     res.status(500).json({ error: "Failed to fetch notifications" });
+  }
+});
+
+app.get("/api/webapp/safeguards", async (req, res) => {
+  const session = await getMemberSession(req);
+  if (!session) return res.status(401).json({ error: "Please login first" });
+
+  try {
+    const platform = "telegram";
+    const userId = req.telegramUser.id;
+    const guardian = guardianService
+      ? guardianService.getStatus(platform, userId)
+      : { active: false, activatedAt: null };
+    const events = executionAuditService
+      ? await executionAuditService.list(platform, userId, 20)
+      : [];
+    const safeguardEvents = events.filter((event) => (
+      event.category === "guardian" ||
+      event.category === "margin_monitor" ||
+      event.category === "position_monitor"
+    ));
+
+    res.json({
+      guardian,
+      events: safeguardEvents,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error("WebApp safeguards error:", err.message);
+    res.status(500).json({ error: "Failed to fetch safeguards" });
   }
 });
 
@@ -1287,6 +1490,7 @@ async function bootstrap() {
     guardianService,
     telegramBot,
     lineClient,
+    auditService: executionAuditService,
   });
 
   positionMonitorHandle = startPositionMonitor({

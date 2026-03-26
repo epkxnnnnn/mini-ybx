@@ -46,7 +46,7 @@ function zoneWorsened(oldZone, newZone) {
  * @param {Object|null} opts.telegramBot - Telegram bot instance
  * @param {Object|null} opts.lineClient - LINE client instance
  */
-function startMarginMonitor({ authService, crmClient, guardianService, telegramBot, lineClient }) {
+function startMarginMonitor({ authService, crmClient, guardianService, telegramBot, lineClient, auditService }) {
   if (!authService || !crmClient) {
     console.log("[Margin Monitor] Auth or CRM not configured, skipping");
     return null;
@@ -92,10 +92,31 @@ function startMarginMonitor({ authService, crmClient, guardianService, telegramB
 
         // Update guardian mode based on margin level
         if (marginLevel < ZONE_DANGER) {
+          const wasActive = guardianService.isActive(platform, userId);
           guardianService.activate(platform, userId);
+          if (!wasActive && auditService) {
+            await auditService.record({
+              platform,
+              userId,
+              category: 'guardian',
+              action: 'activated',
+              status: 'warning',
+              payload: { marginLevel, zone: newZone },
+            });
+          }
         } else if (marginLevel > ZONE_CAUTION) {
           const wasActive = guardianService.isActive(platform, userId);
           guardianService.deactivate(platform, userId);
+          if (wasActive && auditService) {
+            await auditService.record({
+              platform,
+              userId,
+              category: 'guardian',
+              action: 'deactivated',
+              status: 'resolved',
+              payload: { marginLevel, zone: newZone },
+            });
+          }
           if (wasActive) {
             await sendAlert(platform, userId, buildRecoveryMessage(marginLevel));
           }
@@ -106,6 +127,16 @@ function startMarginMonitor({ authService, crmClient, guardianService, telegramB
           const now = Date.now();
           if (now - alertState.lastAlertTime > ALERT_COOLDOWN) {
             await sendAlert(platform, userId, buildAlertMessage(marginLevel, newZone));
+            if (auditService) {
+              await auditService.record({
+                platform,
+                userId,
+                category: 'margin_monitor',
+                action: 'alert',
+                status: newZone === 'danger' ? 'critical' : 'warning',
+                payload: { marginLevel, zone: newZone },
+              });
+            }
             alertState.lastAlertTime = now;
           }
         }

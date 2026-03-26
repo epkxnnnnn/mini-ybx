@@ -556,6 +556,34 @@ class CRMClient {
   async updateJournalNotes(memberToken, entryId, payload) {
     return this._memberPut(memberToken, `/api/v1/journal/${entryId}/notes`, payload);
   }
+
+  async getMemberRiskPanel(memberToken, accountId) {
+    return this._memberGet(memberToken, `/api/v1/trading/accounts/${accountId}/risk-panel`);
+  }
+
+  async getMemberAiSignals(memberToken, query = {}) {
+    return this._memberGet(memberToken, '/api/v1/ai-assistant/signals', query);
+  }
+
+  async getMemberMarketAnalysis(memberToken, locale = 'th') {
+    return this._memberGet(memberToken, '/api/v1/ai-assistant/market-analysis', { locale });
+  }
+
+  async generateMemberPortfolioAdvice(memberToken, accountId, locale = 'th') {
+    return this._memberPost(
+      memberToken,
+      `/api/v1/ai-assistant/portfolio/${accountId}/generate?locale=${encodeURIComponent(locale)}`,
+      {}
+    );
+  }
+
+  async generateMemberSignalDetail(memberToken, signal, locale = 'th') {
+    return this._memberPost(
+      memberToken,
+      `/api/v1/ai-assistant/signal-detail?locale=${encodeURIComponent(locale)}`,
+      { signal }
+    );
+  }
 }
 
 module.exports = CRMClient;

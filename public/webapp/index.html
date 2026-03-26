@@ -2722,10 +2722,12 @@ var homeLoaded = false;
 var signalsLoaded = false;
 var portfolioLoaded = false;
 var journalLoaded = false;
+var selectedPortfolioAccountId = '';
 var signalRefreshTimer = null;
 var priceRefreshTimer = null;
 var fundingContext = null;
 var journalStatsData = null;
+var safeguardPollTimer = null;
 var JOURNAL_SETUP_TAGS = ['BOS', 'CHoCH', 'Sweep', 'OrderBlock', 'FVG', 'KeyLevel', 'News', 'Breakout', 'Reversal', 'Scalp'];
 
 var SVG_NS = 'http://www.w3.org/2000/svg';
@@ -2847,6 +2849,10 @@ function showApp() {
 }
 
 function showLogin() {
+  if (safeguardPollTimer) {
+    clearInterval(safeguardPollTimer);
+    safeguardPollTimer = null;
+  }
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('appContainer').classList.remove('visible');
   document.getElementById('tabBar').classList.remove('visible');
@@ -3065,6 +3071,41 @@ function createStatusRow(title, pill, body) {
   return row;
 }
 
+function getSafeguardPill(event) {
+  var status = String(event && event.status || '').toLowerCase();
+  if (status === 'critical') return { label: 'Critical', className: 'risk' };
+  if (status === 'warning') return { label: 'Warning', className: 'warn' };
+  if (status === 'resolved') return { label: 'Resolved', className: 'good' };
+  return { label: 'Update', className: 'good' };
+}
+
+function getSafeguardMessage(event) {
+  if (!event) return '';
+  var payload = event.payload || {};
+  if (event.category === 'guardian' && event.action === 'activated') {
+    return 'Guardian mode is active. Margin is under pressure at ' + Number(payload.marginLevel || 0).toFixed(0) + '%.';
+  }
+  if (event.category === 'guardian' && event.action === 'deactivated') {
+    return 'Guardian mode has been lifted. Margin recovered to ' + Number(payload.marginLevel || 0).toFixed(0) + '%.';
+  }
+  if (event.category === 'margin_monitor') {
+    return 'Margin alert: ' + Number(payload.marginLevel || 0).toFixed(0) + '% in ' + String(payload.zone || 'watch') + ' zone.';
+  }
+  if (event.category === 'position_monitor') {
+    return 'Jerry suggests ' + String(event.action || 'a follow-up action').replace(/_/g, ' ') + ' for ' + String(payload.symbol || 'your position') + '.';
+  }
+  return event.action ? String(event.action).replace(/_/g, ' ') : 'Safeguard update';
+}
+
+function renderSafeguardRows(events) {
+  var wrap = document.createElement('div');
+  wrap.className = 'status-list';
+  events.forEach(function(event, index) {
+    wrap.appendChild(createStatusRow('Safeguard ' + (index + 1), getSafeguardPill(event), getSafeguardMessage(event)));
+  });
+  return wrap;
+}
+
 function createSignalBrief(signal) {
   var item = document.createElement('div');
   item.className = 'signal-brief';
@@ -3111,7 +3152,8 @@ function loadHome() {
     apiFetch('/accounts').catch(function() { return { data: [] }; }),
     apiFetch('/portfolio').catch(function() { return {}; }),
     apiFetch('/ai-signals').catch(function() { return { signals: [] }; }),
-    apiFetch('/transactions/summary').catch(function() { return { data: {} }; })
+    apiFetch('/transactions/summary').catch(function() { return { data: {} }; }),
+    apiFetch('/safeguards').catch(function() { return { guardian: { active: false }, events: [] }; })
   ]).then(function(results) {
     loading.style.display = 'none';
     homeLoaded = true;
@@ -3125,14 +3167,24 @@ function loadHome() {
     var signals = signalsResult.signals || signalsResult.data || [];
     var txSummaryResult = results[4] || {};
     var txSummary = txSummaryResult.data || {};
+    var safeguards = results[5] || { guardian: { active: false }, events: [] };
 
     renderHome(content, {
       profile: profile,
       accounts: accounts,
       portfolio: portfolio,
       signals: Array.isArray(signals) ? signals.slice(0, 2) : [],
-      txSummary: txSummary
+      txSummary: txSummary,
+      safeguards: safeguards
     });
+
+    if (safeguardPollTimer) clearInterval(safeguardPollTimer);
+    safeguardPollTimer = setInterval(function() {
+      if (memberAuth && currentTab === 'home') {
+        homeLoaded = false;
+        loadHome();
+      }
+    }, 60000);
   }).catch(function(err) {
     loading.style.display = 'none';
     var e = document.createElement('div');
@@ -3147,6 +3199,8 @@ function renderHome(content, data) {
   var accounts = data.accounts || [];
   var signals = data.signals || [];
   var txSummary = data.txSummary || {};
+  var safeguards = data.safeguards || { guardian: { active: false }, events: [] };
+  var safeguardEvents = Array.isArray(safeguards.events) ? safeguards.events : [];
   var totalBalance = portfolio.totalBalance;
   if (totalBalance == null && accounts.length) {
     totalBalance = accounts.reduce(function(sum, acct) { return sum + (Number(acct.balance) || 0); }, 0);
@@ -3201,6 +3255,21 @@ function renderHome(content, data) {
   hero.appendChild(metrics);
   content.appendChild(hero);
 
+  if (safeguards.guardian && safeguards.guardian.active) {
+    var guardianCard = document.createElement('div');
+    guardianCard.className = 'card';
+    var guardianTitle = document.createElement('div');
+    guardianTitle.className = 'home-section-title';
+    guardianTitle.textContent = 'Guardian Mode Active';
+    var guardianCopy = document.createElement('div');
+    guardianCopy.className = 'signal-analysis';
+    guardianCopy.textContent = 'Jerry has switched into protection mode. New execution should be treated as blocked until the account is back in a safe margin zone.';
+    guardianCard.appendChild(guardianTitle);
+    guardianCard.appendChild(guardianCopy);
+    if (safeguardEvents.length) guardianCard.appendChild(renderSafeguardRows(safeguardEvents.slice(0, 2)));
+    content.appendChild(guardianCard);
+  }
+
   var actionsCard = document.createElement('div');
   actionsCard.className = 'card';
   var actionsTitle = document.createElement('div');
@@ -3231,6 +3300,11 @@ function renderHome(content, data) {
   statusList.appendChild(createStatusRow('Portfolio Health', health, 'Health score ' + healthScore + ' with equity ' + formatCurrency(totalEquity) + ' and free margin ' + formatCurrency(freeMargin) + '.'));
   statusList.appendChild(createStatusRow('Position Load', positions.length >= 5 ? { label: 'Heavy', className: 'warn' } : { label: 'Controlled', className: 'good' }, positions.length ? ('You have ' + positions.length + ' live positions open right now.') : 'No live positions at the moment.'));
   statusList.appendChild(createStatusRow('Cash Flow', (txSummary.pendingDepositsCount || txSummary.pendingWithdrawalsCount) ? { label: 'Pending', className: 'warn' } : { label: 'Clear', className: 'good' }, ((txSummary.pendingDepositsCount || 0) + (txSummary.pendingWithdrawalsCount || 0)) ? 'There are pending funding requests to monitor.' : 'No pending deposit or withdrawal requests.'));
+  if (safeguards.guardian && safeguards.guardian.active) {
+    statusList.appendChild(createStatusRow('Guardian', { label: 'Active', className: 'risk' }, 'Execution guard is active because Jerry detected unsafe margin conditions.'));
+  } else if (safeguardEvents.length) {
+    statusList.appendChild(createStatusRow('Safeguards', getSafeguardPill(safeguardEvents[0]), getSafeguardMessage(safeguardEvents[0])));
+  }
   statusCard.appendChild(statusTitle);
   statusCard.appendChild(statusList);
   leftCol.appendChild(statusCard);
@@ -3396,7 +3470,7 @@ function renderSignalCard(sig) {
     card.classList.toggle('expanded');
     if (card.classList.contains('expanded')) {
       var dc = card.querySelector('.signal-detail-container');
-      if (dc && !dc.dataset.loaded) loadSignalDetail(sig.symbol, dc);
+      if (dc && !dc.dataset.loaded) loadSignalDetail(sig, dc);
     }
     if (tg && tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
   };
@@ -3499,8 +3573,9 @@ function loadPortfolio() {
   var content = document.getElementById('portfolio-content');
   var loading = document.getElementById('portfolio-loading');
   content.textContent = ''; loading.style.display = 'flex';
+  var qs = selectedPortfolioAccountId ? ('?accountId=' + encodeURIComponent(selectedPortfolioAccountId)) : '';
 
-  apiFetch('/portfolio').then(function(data) {
+  apiFetch('/portfolio' + qs).then(function(data) {
     loading.style.display = 'none';
     portfolioLoaded = true;
     renderPortfolio(data);
@@ -3513,29 +3588,84 @@ function loadPortfolio() {
 
 function renderPortfolio(data) {
   var content = document.getElementById('portfolio-content');
+  content.textContent = '';
 
-  // Health Score gauge
+  var accounts = Array.isArray(data.accounts) ? data.accounts : [];
+  var advice = data.advice || null;
+  var riskPanel = data.riskPanel || {};
+  var positions = Array.isArray(data.positions) ? data.positions : [];
+  selectedPortfolioAccountId = data.selectedAccountId || selectedPortfolioAccountId || '';
+
+  if (!accounts.length) {
+    var empty = document.createElement('div');
+    empty.className = 'no-data';
+    empty.textContent = 'No trading accounts available for portfolio insight.';
+    content.appendChild(empty);
+    return;
+  }
+
+  var accountCard = document.createElement('div'); accountCard.className = 'card';
+  var accountTitle = document.createElement('h4'); accountTitle.textContent = 'Portfolio Account'; accountCard.appendChild(accountTitle);
+  var selector = document.createElement('select');
+  selector.className = 'auth-input';
+  var selectedAccountMeta = null;
+  accounts.forEach(function(account) {
+    var option = document.createElement('option');
+    var accountId = String(account.id);
+    option.value = accountId;
+    option.selected = accountId === String(selectedPortfolioAccountId);
+    if (option.selected) selectedAccountMeta = account;
+    option.textContent = 'MT5 #' + (account.login || account.mt5Login || '-') + ' • ' + formatCurrency(account.balance || account.equity || 0);
+    selector.appendChild(option);
+  });
+  selector.onchange = function() {
+    selectedPortfolioAccountId = selector.value;
+    portfolioLoaded = false;
+    loadPortfolio();
+  };
+  accountCard.appendChild(selector);
+  if (selectedAccountMeta) {
+    var helper = document.createElement('div');
+    helper.style.marginTop = '10px';
+    helper.style.fontSize = '12px';
+    helper.style.color = 'var(--ybx-text-dim)';
+    helper.textContent = 'Showing AI insight for MT5 #' + (selectedAccountMeta.login || selectedAccountMeta.mt5Login || '-') + '. Switch account above if your open trades are on another login.';
+    accountCard.appendChild(helper);
+  }
+  content.appendChild(accountCard);
+
+  if (!advice) {
+    var unavailable = document.createElement('div');
+    unavailable.className = 'error-msg';
+    unavailable.textContent = 'AI portfolio advice is not available for this account yet.';
+    content.appendChild(unavailable);
+    return;
+  }
+
+  var overallScore = Number(advice.overallScore || 0);
+  var gaugeColor = overallScore >= 70 ? 'var(--ybx-green)' : overallScore >= 40 ? 'var(--ybx-yellow)' : 'var(--ybx-red)';
+
   var healthCard = document.createElement('div'); healthCard.className = 'card';
   healthCard.style.textAlign = 'center';
-  var h4 = document.createElement('h4'); h4.textContent = 'Portfolio Health'; healthCard.appendChild(h4);
-
+  var h4 = document.createElement('h4'); h4.textContent = 'AI Portfolio Health'; healthCard.appendChild(h4);
   var gauge = document.createElement('div'); gauge.className = 'health-gauge';
-  var gaugeColor = data.healthScore >= 70 ? 'var(--ybx-green)' : data.healthScore >= 40 ? 'var(--ybx-yellow)' : 'var(--ybx-red)';
-  gauge.appendChild(createSvgRing(100, 42, 8, data.healthScore, gaugeColor));
+  gauge.appendChild(createSvgRing(100, 42, 8, overallScore, gaugeColor));
   var scoreDiv = document.createElement('div'); scoreDiv.className = 'health-score';
-  var numDiv = document.createElement('div'); numDiv.className = 'num'; numDiv.style.color = gaugeColor; numDiv.textContent = data.healthScore;
-  var lblDiv = document.createElement('div'); lblDiv.className = 'lbl'; lblDiv.textContent = 'Health Score';
+  var numDiv = document.createElement('div'); numDiv.className = 'num'; numDiv.style.color = gaugeColor; numDiv.textContent = overallScore;
+  var lblDiv = document.createElement('div'); lblDiv.className = 'lbl'; lblDiv.textContent = advice.riskAssessment && advice.riskAssessment.level ? advice.riskAssessment.level + ' Risk' : 'Portfolio Score';
   scoreDiv.appendChild(numDiv); scoreDiv.appendChild(lblDiv);
   gauge.appendChild(scoreDiv);
   healthCard.appendChild(gauge);
   content.appendChild(healthCard);
 
-  // Summary stats
   var stats = document.createElement('div'); stats.className = 'portfolio-summary';
   [
-    ['$' + Number(data.totalBalance || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}), 'Balance'],
-    ['$' + Number(data.totalEquity || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}), 'Equity'],
-    ['$' + Number(data.freeMargin || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}), 'Free Margin']
+    [formatCurrency(riskPanel.balance || data.totalBalance || 0), 'Balance'],
+    [formatCurrency(riskPanel.equity || data.totalEquity || 0), 'Equity'],
+    [formatCurrency(riskPanel.freeMargin || data.freeMargin || 0), 'Free Margin'],
+    [Number(riskPanel.marginLevel || 0).toFixed(1) + '%', 'Margin Level'],
+    [Number(advice.diversificationScore || 0).toFixed(0), 'Diversification'],
+    [Number(advice.performanceInsights && advice.performanceInsights.winRate || 0).toFixed(1) + '%', 'Win Rate']
   ].forEach(function(s) {
     var st = document.createElement('div'); st.className = 'portfolio-stat';
     var v = document.createElement('div'); v.className = 'val'; v.textContent = s[0];
@@ -3544,28 +3674,49 @@ function renderPortfolio(data) {
   });
   content.appendChild(stats);
 
-  // Open Positions
-  var positions = data.positions || [];
+  var riskCard = document.createElement('div'); riskCard.className = 'card';
+  var riskHeader = document.createElement('h4'); riskHeader.textContent = 'Risk Assessment'; riskCard.appendChild(riskHeader);
+  [
+    ['Risk Score', String(Number(advice.riskAssessment && advice.riskAssessment.score || 0).toFixed(0))],
+    ['Risk Level', advice.riskAssessment && advice.riskAssessment.level || '-'],
+    ['Distance to Stop Out', Number(riskPanel.distanceToStopOutPercent || 0).toFixed(1) + '%']
+  ].forEach(function(rowData) {
+    var row = document.createElement('div'); row.className = 'account-row';
+    var label = document.createElement('span'); label.className = 'label'; label.textContent = rowData[0];
+    var value = document.createElement('span'); value.className = 'value'; value.textContent = rowData[1];
+    row.appendChild(label); row.appendChild(value);
+    riskCard.appendChild(row);
+  });
+  var factors = advice.riskAssessment && Array.isArray(advice.riskAssessment.factors) ? advice.riskAssessment.factors : [];
+  factors.slice(0, 4).forEach(function(factor) {
+    var item = document.createElement('div'); item.className = 'recommendation-item';
+    var icon = document.createElement('span'); icon.className = 'icon'; icon.textContent = '\u26A0\uFE0F';
+    var text = document.createElement('span'); text.textContent = factor;
+    item.appendChild(icon); item.appendChild(text);
+    riskCard.appendChild(item);
+  });
+  content.appendChild(riskCard);
+
   if (positions.length) {
     var posCard = document.createElement('div'); posCard.className = 'card';
-    var ph = document.createElement('h4'); ph.textContent = 'Open Positions (' + positions.length + ')'; posCard.appendChild(ph);
+    var ph = document.createElement('h4'); ph.textContent = 'Live Positions X-Ray (' + positions.length + ')'; posCard.appendChild(ph);
     var table = document.createElement('table'); table.className = 'positions-table';
     var thead = document.createElement('tr');
     ['Symbol', 'Dir', 'Vol', 'P/L'].forEach(function(t) {
       var th = document.createElement('th'); th.textContent = t; thead.appendChild(th);
     });
     table.appendChild(thead);
-    positions.forEach(function(p) {
+    positions.slice(0, 8).forEach(function(p) {
+      var side = String(p.direction || p.side || p.type || '').toUpperCase();
+      var pnl = Number(p.pnl != null ? p.pnl : (p.profit != null ? p.profit : 0));
       var tr = document.createElement('tr');
-      var td1 = document.createElement('td'); td1.textContent = p.symbol; td1.style.fontWeight = '600';
-      var td2 = document.createElement('td');
-      td2.textContent = p.direction;
-      td2.style.color = p.direction === 'BUY' ? 'var(--ybx-green)' : 'var(--ybx-red)';
+      var td1 = document.createElement('td'); td1.textContent = p.symbol || '-'; td1.style.fontWeight = '600';
+      var td2 = document.createElement('td'); td2.textContent = side || '-';
+      td2.style.color = side === 'BUY' ? 'var(--ybx-green)' : 'var(--ybx-red)';
       td2.style.fontWeight = '600';
-      var td3 = document.createElement('td'); td3.textContent = p.volume;
-      var td4 = document.createElement('td');
-      td4.textContent = '$' + Number(p.pnl || 0).toFixed(2);
-      td4.style.color = p.pnl >= 0 ? 'var(--ybx-green)' : 'var(--ybx-red)';
+      var td3 = document.createElement('td'); td3.textContent = p.volume != null ? p.volume : '-';
+      var td4 = document.createElement('td'); td4.textContent = formatCurrency(pnl);
+      td4.style.color = pnl >= 0 ? 'var(--ybx-green)' : 'var(--ybx-red)';
       td4.style.fontWeight = '600';
       tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3); tr.appendChild(td4);
       table.appendChild(tr);
@@ -3574,34 +3725,58 @@ function renderPortfolio(data) {
     content.appendChild(posCard);
   }
 
-  // Risk Breakdown
-  var riskData = data.riskBySymbol || {};
-  var riskKeys = Object.keys(riskData);
-  if (riskKeys.length) {
-    var riskCard = document.createElement('div'); riskCard.className = 'card';
-    var rh = document.createElement('h4'); rh.textContent = 'Risk Breakdown'; riskCard.appendChild(rh);
-    riskKeys.forEach(function(sym) {
-      var r = riskData[sym];
+  var exposure = advice.exposureAnalysis || {};
+  if ((exposure.bySymbol && exposure.bySymbol.length) || (exposure.byAssetClass && exposure.byAssetClass.length)) {
+    var exposureCard = document.createElement('div'); exposureCard.className = 'card';
+    var exposureHeader = document.createElement('h4'); exposureHeader.textContent = 'Exposure Analysis'; exposureCard.appendChild(exposureHeader);
+    (exposure.bySymbol || []).slice(0, 5).forEach(function(item) {
       var row = document.createElement('div'); row.className = 'account-row';
-      var l = document.createElement('span'); l.className = 'label'; l.textContent = sym + ' (' + r.count + ' pos)';
-      var v = document.createElement('span'); v.className = 'value';
-      v.textContent = '$' + Number(r.pnl || 0).toFixed(2);
-      v.style.color = r.pnl >= 0 ? 'var(--ybx-green)' : 'var(--ybx-red)';
-      row.appendChild(l); row.appendChild(v); riskCard.appendChild(row);
+      var label = document.createElement('span'); label.className = 'label'; label.textContent = item.symbol + (item.risk ? ' • ' + item.risk : '');
+      var value = document.createElement('span'); value.className = 'value'; value.textContent = Number(item.percentage || 0).toFixed(1) + '%';
+      row.appendChild(label); row.appendChild(value);
+      exposureCard.appendChild(row);
     });
-    content.appendChild(riskCard);
+    (exposure.byAssetClass || []).slice(0, 3).forEach(function(item) {
+      var row = document.createElement('div'); row.className = 'account-row';
+      var label = document.createElement('span'); label.className = 'label'; label.textContent = item.assetClass;
+      var value = document.createElement('span'); value.className = 'value'; value.textContent = Number(item.percentage || 0).toFixed(1) + '%';
+      row.appendChild(label); row.appendChild(value);
+      exposureCard.appendChild(row);
+    });
+    content.appendChild(exposureCard);
   }
 
-  // AI Recommendations
-  var recs = data.recommendations || [];
+  var performance = advice.performanceInsights || {};
+  var perfCard = document.createElement('div'); perfCard.className = 'card';
+  var perfHeader = document.createElement('h4'); perfHeader.textContent = 'Performance Insights'; perfCard.appendChild(perfHeader);
+  [
+    ['Profit Factor', performance.profitFactor != null ? Number(performance.profitFactor).toFixed(2) : '-'],
+    ['Avg Hold Time', performance.averageHoldTime || '-'],
+    ['Best Pair', performance.bestPerformingPair || '-'],
+    ['Worst Pair', performance.worstPerformingPair || '-']
+  ].forEach(function(rowData) {
+    var row = document.createElement('div'); row.className = 'account-row';
+    var label = document.createElement('span'); label.className = 'label'; label.textContent = rowData[0];
+    var value = document.createElement('span'); value.className = 'value'; value.textContent = rowData[1];
+    row.appendChild(label); row.appendChild(value);
+    perfCard.appendChild(row);
+  });
+  content.appendChild(perfCard);
+
+  var recs = Array.isArray(advice.recommendations) ? advice.recommendations : [];
   if (recs.length) {
     var recCard = document.createElement('div'); recCard.className = 'card';
     var recH = document.createElement('h4'); recH.textContent = 'AI Recommendations'; recCard.appendChild(recH);
     recs.forEach(function(rec) {
       var item = document.createElement('div'); item.className = 'recommendation-item';
-      var icon = document.createElement('span'); icon.className = 'icon'; icon.textContent = '\uD83D\uDCA1';
-      var text = document.createElement('span'); text.textContent = rec;
-      item.appendChild(icon); item.appendChild(text); recCard.appendChild(item);
+      var icon = document.createElement('span'); icon.className = 'icon';
+      icon.textContent = rec.priority === 'High' ? '\uD83D\uDEA8' : rec.priority === 'Medium' ? '\uD83D\uDCA1' : '\u2705';
+      var textWrap = document.createElement('div');
+      var title = document.createElement('div'); title.style.fontWeight = '700'; title.textContent = rec.title || 'Recommendation';
+      var desc = document.createElement('div'); desc.style.color = 'var(--ybx-text-dim)'; desc.style.fontSize = '12px';
+      desc.textContent = (rec.description || '') + (rec.potentialImpact ? ' • Impact: ' + rec.potentialImpact : '');
+      textWrap.appendChild(title); textWrap.appendChild(desc);
+      item.appendChild(icon); item.appendChild(textWrap); recCard.appendChild(item);
     });
     content.appendChild(recCard);
   }
@@ -4157,14 +4332,37 @@ function openNotifications() {
   var sp = document.createElement('div'); sp.className = 'loading-spinner'; loading.appendChild(sp);
   loading.appendChild(document.createTextNode('Loading...')); body.appendChild(loading);
   apiFetch('/notifications').then(function(result) {
+    return Promise.all([Promise.resolve(result), apiFetch('/safeguards').catch(function() { return { guardian: { active: false }, events: [] }; })]);
+  }).then(function(results) {
     body.textContent = '';
-    var notifs = result.data ? (result.data.data || (Array.isArray(result.data) ? result.data : [])) : [];
-    if (!notifs.length) { var n = document.createElement('div'); n.className = 'no-data'; n.textContent = 'No notifications'; body.appendChild(n); return; }
+    var notifResult = results[0] || {};
+    var safeguardResult = results[1] || { guardian: { active: false }, events: [] };
+    var notifs = notifResult.data ? (notifResult.data.data || (Array.isArray(notifResult.data) ? notifResult.data : [])) : [];
+    var safeguards = Array.isArray(safeguardResult.events) ? safeguardResult.events : [];
+
+    if (safeguardResult.guardian && safeguardResult.guardian.active) {
+      var guardianItem = document.createElement('div');
+      guardianItem.style.cssText = 'padding:12px 0;border-bottom:1px solid var(--ybx-border);font-size:13px;';
+      guardianItem.textContent = 'Guardian Mode Active — Jerry is currently protecting the account from unsafe execution.';
+      body.appendChild(guardianItem);
+    }
+
+    safeguards.forEach(function(event) {
+      var item = document.createElement('div'); item.style.cssText = 'padding:10px 0;border-bottom:1px solid var(--ybx-border);font-size:13px;';
+      item.textContent = getSafeguardMessage(event);
+      body.appendChild(item);
+    });
+
     notifs.forEach(function(n) {
       var item = document.createElement('div'); item.style.cssText = 'padding:10px 0;border-bottom:1px solid var(--ybx-border);font-size:13px;';
       item.textContent = n.message || n.title || n.text || JSON.stringify(n);
       body.appendChild(item);
     });
+
+    if (!safeguards.length && !notifs.length && !(safeguardResult.guardian && safeguardResult.guardian.active)) {
+      var n = document.createElement('div'); n.className = 'no-data'; n.textContent = 'No notifications';
+      body.appendChild(n);
+    }
   }).catch(function() { body.textContent = ''; var e = document.createElement('div'); e.className = 'error-msg'; e.textContent = 'Failed to load notifications'; body.appendChild(e); });
 }
 
@@ -4316,47 +4514,48 @@ function saveSignalToJournal(sig) {
   }, 300);
 }
 
-function loadSignalDetail(symbol, container) {
+function loadSignalDetail(signal, container) {
   if (container.dataset.loaded) return;
   container.dataset.loaded = '1';
   var loadingEl = document.createElement('div'); loadingEl.className = 'loading';
   var sp = document.createElement('div'); sp.className = 'loading-spinner'; loadingEl.appendChild(sp);
-  loadingEl.appendChild(document.createTextNode('Loading analysis...'));
+  loadingEl.appendChild(document.createTextNode('Loading AI insight...'));
   container.appendChild(loadingEl);
 
-  apiFetch('/analysis/' + symbol).then(function(data) {
+  apiFetch('/signal-detail', {
+    method: 'POST',
+    body: { signal: signal }
+  }).then(function(detail) {
     container.textContent = '';
-    if (data.structure) {
-      var struct = data.structure.data || data.structure;
-      var rows = [];
-      if (struct.trend || struct.direction) rows.push(['Trend', struct.trend || struct.direction]);
-      if (struct.timeframe) rows.push(['Timeframe', struct.timeframe]);
-      if (struct.summary || struct.description) rows.push(['Summary', struct.summary || struct.description]);
-      if (rows.length) renderDetailSection(container, 'Market Structure', rows);
+    if (detail.deepAnalysis) {
+      var analysisSection = document.createElement('div'); analysisSection.className = 'signal-detail-section';
+      var analysisTitle = document.createElement('h5'); analysisTitle.textContent = 'Jerry Deep Analysis'; analysisSection.appendChild(analysisTitle);
+      var analysisBody = document.createElement('div'); analysisBody.className = 'signal-analysis'; analysisBody.textContent = detail.deepAnalysis;
+      analysisSection.appendChild(analysisBody);
+      container.appendChild(analysisSection);
     }
-    if (data.htfBias) {
-      var biases = data.htfBias.data || data.htfBias;
-      var bArr = Array.isArray(biases) ? biases : (biases.biases || biases.timeframes || []);
-      if (bArr.length) {
-        var bRows = bArr.slice(0, 5).map(function(b) { return [b.timeframe || b.tf || '', b.bias || b.direction || '']; });
-        renderDetailSection(container, 'HTF Bias', bRows);
-      }
+    if (detail.priceAction) {
+      renderDetailSection(container, 'Price Action', [['Context', detail.priceAction]]);
     }
-    if (data.keyLevels) {
-      var levels = data.keyLevels.data || data.keyLevels;
-      var lArr = Array.isArray(levels) ? levels : (levels.levels || []);
-      if (lArr.length) {
-        var lRows = lArr.slice(0, 5).map(function(l) { return [l.type || l.label || 'Level', l.price || l.value || '']; });
-        renderDetailSection(container, 'Key Levels', lRows);
-      }
+    if (detail.keyLevels) {
+      renderDetailSection(container, 'Key Levels', [
+        ['Strong Support', detail.keyLevels.strongSupport],
+        ['Pivot Point', detail.keyLevels.pivotPoint],
+        ['Strong Resistance', detail.keyLevels.strongResistance]
+      ]);
     }
-    if (data.sweeps) {
-      var sweeps = data.sweeps.data || data.sweeps;
-      var sArr = Array.isArray(sweeps) ? sweeps : (sweeps.sweeps || []);
-      if (sArr.length) {
-        var sRows = sArr.slice(0, 3).map(function(s) { return [s.type || s.direction || 'Sweep', (s.price || '') + (s.timeframe ? ' (' + s.timeframe + ')' : '')]; });
-        renderDetailSection(container, 'Liquidity Sweeps', sRows);
-      }
+    if (detail.riskAssessment) {
+      renderDetailSection(container, 'Risk Assessment', [
+        ['Risk Level', detail.riskAssessment.riskLevel || '-'],
+        ['Max Drawdown', detail.riskAssessment.maxDrawdown || '-'],
+        ['Position Sizing', detail.riskAssessment.positionSizing || '-']
+      ]);
+    }
+    if (detail.marketContext) {
+      renderDetailSection(container, 'Market Context', [['Overview', detail.marketContext]]);
+    }
+    if (detail.tradeManagement) {
+      renderDetailSection(container, 'Trade Management', [['Plan', detail.tradeManagement]]);
     }
     if (!container.children.length) {
       var noData = document.createElement('div'); noData.className = 'no-data'; noData.textContent = 'No detailed analysis available';
@@ -4364,7 +4563,7 @@ function loadSignalDetail(symbol, container) {
     }
   }).catch(function() {
     container.textContent = '';
-    var err = document.createElement('div'); err.className = 'error-msg'; err.textContent = 'Failed to load analysis';
+    var err = document.createElement('div'); err.className = 'error-msg'; err.textContent = 'Failed to load AI insight';
     container.appendChild(err);
   });
 }
