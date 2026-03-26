@@ -183,6 +183,7 @@ async function loadPersistedMaps(repo) {
       lastTradeSetups: new Map(),
       webhookTokens: new Map(),
       webhookUserTokens: new Map(),
+      languagePrefs: new Map(),
     };
   }
 
@@ -200,6 +201,7 @@ async function loadPersistedMaps(repo) {
     lastTradeSetups,
     webhookTokens,
     webhookUserTokens,
+    languagePrefs,
   ] = await Promise.all([
     repo.list('auth:sessions'),
     repo.list('auth:login-states'),
@@ -214,6 +216,7 @@ async function loadPersistedMaps(repo) {
     repo.list('ai:last-trade-setups'),
     repo.list('webhook:tokens'),
     repo.list('webhook:user-tokens'),
+    repo.list('ai:language-prefs'),
   ]);
 
   return {
@@ -230,6 +233,7 @@ async function loadPersistedMaps(repo) {
     lastTradeSetups: toMap(lastTradeSetups),
     webhookTokens: toMap(webhookTokens),
     webhookUserTokens: toMap(webhookUserTokens),
+    languagePrefs: toMap(languagePrefs),
   };
 }
 
@@ -1738,6 +1742,7 @@ async function bootstrap() {
     conversations: persisted.conversations,
     summaries: persisted.summaries,
     lastTradeSetups: persisted.lastTradeSetups,
+    languagePrefs: persisted.languagePrefs,
   });
 
   crmClient =

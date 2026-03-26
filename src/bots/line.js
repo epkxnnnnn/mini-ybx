@@ -235,6 +235,29 @@ async function handleEvent(event, client, aiEngine, commandRouter, authService) 
     }
   }
 
+  // ========== /language command ==========
+  if (text === "/language" || text.startsWith("/language ")) {
+    const arg = text.slice("/language".length).trim().toLowerCase();
+    if (!arg) {
+      const current = aiEngine.getLanguage("line", userId);
+      const label = current === "en" ? "English" : current === "zh" ? "\u4E2D\u6587" : "\u0E44\u0E17\u0E22";
+      return replyLine(client, replyToken,
+        `\uD83C\uDF10 Language: ${label}\n\n` +
+        `/language th \u2014 \u0E44\u0E17\u0E22\n` +
+        `/language en \u2014 English\n` +
+        `/language zh \u2014 \u4E2D\u6587`
+      );
+    }
+    const langMap = { th: "th", thai: "th", en: "en", english: "en", zh: "zh", chinese: "zh", cn: "zh" };
+    const lang = langMap[arg];
+    if (!lang) {
+      return replyLine(client, replyToken, "\u274C Unknown language. Use: /language th, /language en, /language zh");
+    }
+    aiEngine.setLanguage("line", userId, lang);
+    const labels = { th: "\uD83C\uDDF9\uD83C\uDDED \u0E44\u0E17\u0E22", en: "\uD83C\uDDEC\uD83C\uDDE7 English", zh: "\uD83C\uDDE8\uD83C\uDDF3 \u4E2D\u6587" };
+    return replyLine(client, replyToken, `\u2705 Language: ${labels[lang]}`);
+  }
+
   // ========== /webhook command — TradingView webhook management ==========
   if (text === "/webhook" || text === "/webhook reset" || text === "/webhook off") {
     if (!webhookServiceRef) {

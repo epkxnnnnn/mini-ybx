@@ -424,6 +424,18 @@ function setupTelegram(aiEngine, commandRouter, authService) {
     const chatId = query.message.chat.id;
     const userId = query.from.id;
 
+    // --- Language Selection ---
+    if (data.startsWith("set_lang:")) {
+      const lang = data.slice("set_lang:".length);
+      if (["th", "en", "zh"].includes(lang)) {
+        aiEngine.setLanguage("telegram", userId, lang);
+        const labels = { th: "\uD83C\uDDF9\uD83C\uDDED \u0E44\u0E17\u0E22", en: "\uD83C\uDDEC\uD83C\uDDE7 English", zh: "\uD83C\uDDE8\uD83C\uDDF3 \u4E2D\u6587" };
+        await bot.answerCallbackQuery(query.id, { text: `\u2705 ${labels[lang]}` });
+        await bot.sendMessage(chatId, `\u2705 Language: ${labels[lang]}`);
+      }
+      return;
+    }
+
     if (!tradePlanService) {
       await bot.answerCallbackQuery(query.id, { text: "Service unavailable" });
       return;
@@ -1588,6 +1600,37 @@ function setupTelegram(aiEngine, commandRouter, authService) {
       );
     }
 
+    // ========== /language command — switch Jerry's language ==========
+    if (text === "/language" || text.startsWith("/language ")) {
+      const arg = text.slice("/language".length).trim().toLowerCase();
+
+      if (!arg) {
+        const current = aiEngine.getLanguage("telegram", userId);
+        const label = current === "en" ? "English" : current === "zh" ? "\u4E2D\u6587" : "\u0E44\u0E17\u0E22";
+        return bot.sendMessage(chatId,
+          `\uD83C\uDF10 Language: ${label}\n\n\u0E40\u0E25\u0E37\u0E2D\u0E01\u0E20\u0E32\u0E29\u0E32:`,
+          {
+            reply_markup: {
+              inline_keyboard: [[
+                { text: "\uD83C\uDDF9\uD83C\uDDED \u0E44\u0E17\u0E22", callback_data: "set_lang:th" },
+                { text: "\uD83C\uDDEC\uD83C\uDDE7 English", callback_data: "set_lang:en" },
+                { text: "\uD83C\uDDE8\uD83C\uDDF3 \u4E2D\u6587", callback_data: "set_lang:zh" },
+              ]],
+            },
+          }
+        );
+      }
+
+      const langMap = { th: "th", thai: "th", "\u0E44\u0E17\u0E22": "th", en: "en", english: "en", eng: "en", zh: "zh", chinese: "zh", cn: "zh", "\u4E2D\u6587": "zh" };
+      const lang = langMap[arg];
+      if (!lang) {
+        return bot.sendMessage(chatId, "\u274C Unknown language. Use: /language th, /language en, /language zh");
+      }
+      aiEngine.setLanguage("telegram", userId, lang);
+      const labels = { th: "\uD83C\uDDF9\uD83C\uDDED \u0E44\u0E17\u0E22 — Jerry \u0E08\u0E30\u0E15\u0E2D\u0E1A\u0E40\u0E1B\u0E47\u0E19\u0E20\u0E32\u0E29\u0E32\u0E44\u0E17\u0E22", en: "\uD83C\uDDEC\uD83C\uDDE7 English — Jerry will respond in English", zh: "\uD83C\uDDE8\uD83C\uDDF3 \u4E2D\u6587 \u2014 Jerry \u5C06\u4F7F\u7528\u4E2D\u6587\u56DE\u590D" };
+      return bot.sendMessage(chatId, `\u2705 ${labels[lang]}`);
+    }
+
     // ========== /webhook command — TradingView webhook management ==========
     if (text === "/webhook" || text === "/webhook reset" || text === "/webhook off") {
       if (!webhookServiceRef) {
@@ -1775,6 +1818,7 @@ function setupTelegram(aiEngine, commandRouter, authService) {
           `/rate — อัตราแลกเปลี่ยน THB/USD\n` +
           `/dashboard — เปิด Trading Dashboard\n` +
           `/webhook — TradingView Webhook\n` +
+          `/language — \u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19\u0E20\u0E32\u0E29\u0E32 (TH/EN/ZH)\n` +
           `/checklist — Pre-trade Checklist\n` +
           `/zones — Trade Setup Grading\n` +
           `/reset — เริ่มบทสนทนาใหม่`,

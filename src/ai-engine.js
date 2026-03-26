@@ -75,6 +75,7 @@ class YBXAIEngine {
     this.conversations = options.conversations || new Map();
     this.summaries = options.summaries || new Map();
     this.lastTradeSetups = options.lastTradeSetups || new Map();
+    this.languagePrefs = options.languagePrefs || new Map(); // "platform:userId" → "th"|"en"|"zh"
     this.maxHistory = 20; // keep last 20 messages per user
     this.summarizeThreshold = 20; // summarize when history exceeds this
     this.maxMapEntries = 10000; // max entries before eviction
@@ -632,6 +633,15 @@ class YBXAIEngine {
 - หลีกเลี่ยงการเกริ่นยาวหรืออธิบายซ้ำ
 - ต้องปิดท้ายด้วยสรุปสั้นหรือ action step ที่ชัดเจน`;
       }
+      // Language preference
+      const lang = this.getLanguage(platform, userId);
+      if (lang === "en") {
+        systemInstruction += "\n\n[Language Override] RESPOND IN ENGLISH. All explanations, analysis, and conversation must be in English. Keep trading terms in English.";
+      } else if (lang === "zh") {
+        systemInstruction += "\n\n[Language Override] 请用中文回复。所有解释、分析和对话都必须使用中文。交易术语保持英文 (Entry, SL, TP, BUY, SELL 等)。";
+      }
+      // default "th" — system prompt is already in Thai
+
       if (memberContext) {
         systemInstruction += memberContext;
       }
@@ -712,6 +722,16 @@ class YBXAIEngine {
 
   getLastTradeSetup(platform, userId) {
     return this.lastTradeSetups.get(this._key(platform, userId)) || null;
+  }
+
+  setLanguage(platform, userId, lang) {
+    const key = this._key(platform, userId);
+    this.languagePrefs.set(key, lang);
+    this._persist("ai:language-prefs", key, lang);
+  }
+
+  getLanguage(platform, userId) {
+    return this.languagePrefs.get(this._key(platform, userId)) || "th";
   }
 }
 
