@@ -391,6 +391,12 @@ function setupTelegram(aiEngine, commandRouter, authService) {
     return null;
   }
 
+  const pollingEnabled = process.env.TELEGRAM_POLLING_ENABLED !== "false";
+  if (!pollingEnabled) {
+    console.log("\u23ED\uFE0F  Telegram: Polling disabled (TELEGRAM_POLLING_ENABLED=false), skipping");
+    return null;
+  }
+
   const bot = new TelegramBot(token, { polling: true });
   const WEBAPP_URL = process.env.WEBAPP_URL || null;
 
