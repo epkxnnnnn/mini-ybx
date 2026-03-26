@@ -35,6 +35,8 @@ test('generateSignal prefers valid market structure and strongest levels', () =>
     riskReward: '1:3.0',
     analysis: 'bullish structure detected',
     timeframe: 'H1',
+    priceStatus: null,
+    sourceTimestamp: null,
   });
 });
 
@@ -61,6 +63,8 @@ test('generateSignal falls back to percentage-based SL/TP when levels are unavai
     riskReward: '1:2.0',
     analysis: 'bearish structure detected',
     timeframe: 'H4',
+    priceStatus: null,
+    sourceTimestamp: null,
   });
 });
 
@@ -73,4 +77,42 @@ test('generateSignal clamps low confidence when HTF alignment is weak', () => {
   );
 
   assert.equal(signal.confidence, 35);
+});
+
+test('generateSignal uses live tick price as the entry anchor when available', () => {
+  const signal = generateSignal(
+    'XAUUSD',
+    { trend: 'bullish', currentPrice: 3333, timeframe: 'H1' },
+    { biases: [{ bias: 'bullish' }] },
+    { levels: [{ type: 'support', price: 3040 }, { type: 'resistance', price: 3070 }] },
+    null,
+    {
+      symbol: 'XAUUSD',
+      bid: 3050,
+      ask: 3050.3,
+      timestamp: Date.now(),
+    }
+  );
+
+  assert.equal(signal.entry, 3050);
+  assert.equal(signal.priceStatus, 'live');
+  assert.ok(signal.sourceTimestamp);
+});
+
+test('generateSignal rejects delayed livePrice inputs', () => {
+  const signal = generateSignal(
+    'XAUUSD',
+    { trend: 'bullish', currentPrice: 3333, timeframe: 'H1' },
+    { biases: [{ bias: 'bullish' }] },
+    { levels: [{ type: 'support', price: 3040 }, { type: 'resistance', price: 3070 }] },
+    null,
+    {
+      symbol: 'XAUUSD',
+      bid: 3050,
+      ask: 3050.3,
+      timestamp: Date.now() - 60000,
+    }
+  );
+
+  assert.equal(signal, null);
 });

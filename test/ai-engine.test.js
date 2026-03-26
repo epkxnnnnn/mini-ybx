@@ -26,3 +26,32 @@ test('resetConversation clears cached structured trade setup', () => {
   engine.resetConversation('telegram', '123');
   assert.equal(engine.getLastTradeSetup('telegram', '123'), null);
 });
+
+test('chat blocks trade setup generation when live price is unavailable', async () => {
+  const engine = new YBXAIEngine();
+  let modelCalled = false;
+
+  engine.crm = {};
+  engine.fetchPrice = async () => null;
+  engine.fetchAnalysis = async () => ({
+    structure: { trend: 'bullish', price: 3333 },
+    htfBias: { biases: [{ timeframe: 'H4', bias: 'bullish', strength: 'high' }] },
+    keyLevels: [{ type: 'support', price: 3320 }, { type: 'resistance', price: 3360 }],
+    sweeps: [],
+  });
+  engine.client = {
+    models: {
+      generateContent: async () => {
+        modelCalled = true;
+        return { text: 'should not be used' };
+      },
+    },
+  };
+
+  const reply = await engine.chat('telegram', '42', 'วิเคราะห์ XAUUSD พร้อม entry sl tp', 'Ken');
+
+  assert.match(reply, /ไม่สามารถดึงราคาล่าสุด/);
+  assert.match(reply, /XAUUSD/);
+  assert.equal(modelCalled, false);
+  assert.equal(engine.getLastTradeSetup('telegram', '42'), null);
+});

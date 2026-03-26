@@ -6,6 +6,8 @@
 // Commands that don't require authentication
 const PUBLIC_COMMANDS = ['/start', '/login', '/logout', '/checklist', '/zones', '/cancel'];
 
+const { normalizeTick } = require('./market-data-service');
+
 class CommandRouter {
   constructor(crmClient, aiEngine, authService) {
     this.crm = crmClient;
@@ -82,28 +84,34 @@ class CommandRouter {
 
   async handlePrice(args) {
     const symbol = this._resolveSymbol(args) || 'XAUUSD';
-    const raw = await this.crm.getTickStats(symbol);
-    const stats = this._unwrap(raw);
-    const tick = this._findTick(stats, symbol);
+    const raw = await this.crm.getPrices(symbol);
+    const data = this._unwrap(raw) || {};
+    const tick = data[symbol.toUpperCase()] || data[symbol] || null;
+    const normalizedTick = normalizeTick({
+      ...tick,
+      timestamp: tick?.timestamp || tick?.time || raw?.timestamp || raw?.fetchedAt || null,
+    }, symbol);
 
-    if (!tick) {
+    if (!normalizedTick) {
       return { text: `❌ ไม่พบข้อมูลราคาสำหรับ ${symbol.toUpperCase()}` };
     }
 
-    const bid = this._fmt(tick.bid);
-    const ask = this._fmt(tick.ask);
-    const spread = this._fmt(tick.spread ?? (tick.ask - tick.bid));
-    const high = this._fmt(tick.bidHigh ?? tick.high);
-    const low = this._fmt(tick.bidLow ?? tick.low);
-    const change = tick.priceChange != null ? `${tick.priceChange > 0 ? '+' : ''}${tick.priceChange.toFixed(2)}%` : (tick.change != null ? this._fmtChange(tick.change) : 'N/A');
-    const changePct = tick.priceChange != null ? '' : (tick.changePercent != null ? `(${tick.changePercent > 0 ? '+' : ''}${tick.changePercent.toFixed(2)}%)` : '');
+    const bid = this._fmt(normalizedTick.bid);
+    const ask = this._fmt(normalizedTick.ask);
+    const spread = this._fmt(normalizedTick.spread);
+    const high = this._fmt(normalizedTick.high);
+    const low = this._fmt(normalizedTick.low);
+    const change = normalizedTick.change != null ? `${normalizedTick.change > 0 ? '+' : ''}${normalizedTick.change.toFixed(2)}%` : 'N/A';
+    const statusLine = normalizedTick.sourceTimestamp
+      ? `\nStatus: ${normalizedTick.priceStatusLabel} | Tick Time: ${new Date(normalizedTick.sourceTimestamp).toISOString()}`
+      : `\nStatus: ${normalizedTick.priceStatusLabel}`;
 
     return {
       text:
         `📊 ราคา ${symbol.toUpperCase()} — YBX Live\n\n` +
         `Bid: $${bid} | Ask: $${ask} | Spread: ${spread}\n` +
         `High: $${high} | Low: $${low}\n` +
-        `Change: ${change} ${changePct}`.trim(),
+        `Change: ${change}${statusLine}`.trim(),
     };
   }
 
@@ -119,7 +127,7 @@ class CommandRouter {
       this.crm.getHtfBias(symbol),
       this.crm.getKeyLevels(symbol),
       this.crm.getLiquiditySweeps(symbol),
-      this.crm.getTickStats(symbol),
+      this.crm.getPrices(symbol),
     ]);
 
     // Build context for AI
@@ -160,8 +168,8 @@ class CommandRouter {
 
     // Get price
     if (stats.status === 'fulfilled') {
-      const statsData = this._unwrap(stats.value);
-      const tick = this._findTick(statsData, symbol);
+      const statsData = this._unwrap(stats.value) || {};
+      const tick = statsData[symbol.toUpperCase()] || statsData[symbol] || null;
       if (tick) {
         context += `Current Price — Bid: $${this._fmt(tick.bid)} | Ask: $${this._fmt(tick.ask)}\n`;
       }

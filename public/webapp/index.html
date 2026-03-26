@@ -1043,6 +1043,14 @@
       letter-spacing: 0.04em;
     }
 
+    .price-card .price-status {
+      margin-top: 10px;
+      color: var(--ybx-text-soft);
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
     .signal-card {
       cursor: pointer;
       transition: transform 0.2s, border-color 0.2s;
@@ -2716,6 +2724,7 @@ var portfolioLoaded = false;
 var journalLoaded = false;
 var signalRefreshTimer = null;
 var priceRefreshTimer = null;
+var fundingContext = null;
 
 var SVG_NS = 'http://www.w3.org/2000/svg';
 var TAB_META = {
@@ -3331,6 +3340,12 @@ function renderPrices() {
     var lo = document.createElement('span'); lo.textContent = 'L ' + low.toFixed(digits); hl.appendChild(lo);
     var hi = document.createElement('span'); hi.textContent = 'H ' + high.toFixed(digits); hl.appendChild(hi);
     card.appendChild(hl);
+    var priceStatus = document.createElement('div');
+    priceStatus.className = 'price-status';
+    var statusLabel = String(item.priceStatusLabel || item._priceStatusLabel || item.priceStatus || 'Unknown').toUpperCase();
+    var statusTime = item.sourceTimestamp ? new Date(item.sourceTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
+    priceStatus.textContent = statusTime ? (statusLabel + ' • ' + statusTime) : statusLabel;
+    card.appendChild(priceStatus);
     grid.appendChild(card);
   });
 }
@@ -3404,7 +3419,15 @@ function renderSignalCard(sig) {
   confWrap.appendChild(ring);
   var confText = document.createElement('div');
   var ct1 = document.createElement('div'); ct1.style.cssText = 'font-size:13px;font-weight:600;'; ct1.textContent = 'Confidence';
-  var ct2 = document.createElement('div'); ct2.style.cssText = 'font-size:11px;color:var(--ybx-text-dim);'; ct2.textContent = 'Based on structure + HTF alignment';
+  var ct2 = document.createElement('div'); ct2.style.cssText = 'font-size:11px;color:var(--ybx-text-dim);';
+  var sourceLabel = 'Based on structure + HTF alignment';
+  if (sig.priceStatusLabel || sig.priceStatus) {
+    sourceLabel += ' • ' + String(sig.priceStatusLabel || sig.priceStatus).toUpperCase();
+  }
+  if (sig.sourceTimestamp) {
+    sourceLabel += ' • ' + new Date(sig.sourceTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+  ct2.textContent = sourceLabel;
   confText.appendChild(ct1); confText.appendChild(ct2);
   confWrap.appendChild(confText);
   card.appendChild(confWrap);
@@ -3760,7 +3783,8 @@ function loadDeposit() {
   Promise.all([
     apiFetch('/transactions/summary').catch(function() { return { data: {} }; }),
     apiFetch('/transactions?pageSize=15').catch(function() { return { data: { data: [] } }; }),
-    apiFetch('/rate').catch(function() { return null; })
+    apiFetch('/rate').catch(function() { return null; }),
+    loadFundingContext().catch(function() { return null; })
   ]).then(function(results) {
     txLoading.style.display = 'none';
 
@@ -3867,46 +3891,220 @@ function showActionForm(type) {
   var body = document.getElementById('action-form-body');
   body.textContent = ''; overlay.style.display = 'flex';
   title.textContent = type.charAt(0).toUpperCase() + type.slice(1);
-  if (type === 'deposit') buildFinForm(body, 'deposit', 'green', 'Submit Deposit', '/deposit');
-  else if (type === 'withdraw') buildFinForm(body, 'withdraw', 'red', 'Submit Withdrawal', '/withdraw');
-  else if (type === 'transfer') buildTransferForm(body);
-  if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
+  var loading = document.createElement('div'); loading.className = 'loading';
+  var sp = document.createElement('div'); sp.className = 'loading-spinner'; loading.appendChild(sp);
+  loading.appendChild(document.createTextNode('Loading funding options...'));
+  body.appendChild(loading);
+  loadFundingContext().then(function(ctx) {
+    body.textContent = '';
+    if (type === 'deposit') buildDepositForm(body, ctx);
+    else if (type === 'withdraw') buildWithdrawForm(body, ctx);
+    else if (type === 'transfer') buildTransferForm(body, ctx);
+    if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
+  }).catch(function(err) {
+    body.textContent = '';
+    var e = document.createElement('div'); e.className = 'error-msg'; e.textContent = err.message || 'Failed to load funding options';
+    body.appendChild(e);
+  });
 }
 
 function hideActionForm() { document.getElementById('action-form-overlay').style.display = 'none'; }
 
-function buildFinForm(container, prefix, color, btnText, endpoint) {
-  var g1 = mkInput('Amount (USD)', prefix + '-amount', 'number', '0.00');
-  var g2 = mkSelect('Payment Method', prefix + '-method', [{v:'BankTransfer',l:'Bank Transfer'},{v:'Crypto',l:'Crypto (USDT)'}]);
-  var err = document.createElement('div'); err.className = 'form-error'; err.id = prefix + '-error';
-  var btn = document.createElement('button'); btn.className = 'form-submit ' + color; btn.textContent = btnText;
-  btn.onclick = function() {
-    var amount = parseFloat(document.getElementById(prefix+'-amount').value);
-    var method = document.getElementById(prefix+'-method').value;
-    if (!amount || amount <= 0) { err.textContent = 'Enter a valid amount'; err.style.display = 'block'; return; }
-    btn.disabled = true; btn.textContent = 'Submitting...'; err.style.display = 'none';
-    apiFetch(endpoint, { method: 'POST', body: { amount: amount, paymentMethod: method } })
-      .then(function(data) { showFormSuccess(container, (data.data && data.data.transactionRef) ? 'Submitted! Ref: ' + data.data.transactionRef : 'Submitted successfully!'); })
-      .catch(function(e) { err.textContent = e.message || 'Failed'; err.style.display = 'block'; btn.disabled = false; btn.textContent = btnText; });
-  };
-  container.appendChild(g1); container.appendChild(g2); container.appendChild(err); container.appendChild(btn);
+function loadFundingContext() {
+  if (fundingContext) return Promise.resolve(fundingContext);
+  return Promise.all([
+    apiFetch('/accounts').catch(function() { return { data: [] }; }),
+    apiFetch('/wallets').catch(function() { return { data: [] }; }),
+    apiFetch('/bank-accounts').catch(function() { return { data: [] }; }),
+    apiFetch('/payment-provider').catch(function() { return { data: {} }; })
+  ]).then(function(results) {
+    fundingContext = {
+      accounts: normalizeFundingList(results[0]),
+      wallets: normalizeFundingList(results[1]),
+      bankAccounts: normalizeFundingList(results[2]),
+      paymentProvider: (results[3] && results[3].data) ? results[3].data : (results[3] || {})
+    };
+    return fundingContext;
+  });
 }
 
-function buildTransferForm(container) {
+function normalizeFundingList(result) {
+  if (!result) return [];
+  var data = result.data != null ? result.data : result;
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data.data)) return data.data;
+  if (Array.isArray(data.accounts)) return data.accounts;
+  if (Array.isArray(data.wallets)) return data.wallets;
+  if (Array.isArray(data.items)) return data.items;
+  return [];
+}
+
+function getAccountOptions(accounts) {
+  return (accounts || []).map(function(acct) {
+    var id = acct.mt5AccountId || acct.id || acct.accountId || acct.login;
+    var login = acct.login || acct.accountNumber || acct.accountId || 'MT5';
+    var balance = acct.balance != null ? (' • $' + Number(acct.balance).toFixed(2)) : '';
+    return { v: String(id), l: 'MT5 #' + login + balance };
+  });
+}
+
+function getWalletOptions(wallets) {
+  return (wallets || []).map(function(wallet) {
+    var id = wallet.walletId || wallet.id;
+    var code = wallet.currency || wallet.walletNumber || 'Wallet';
+    var balance = wallet.balance != null ? (' • $' + Number(wallet.balance).toFixed(2)) : '';
+    return { v: String(id), l: code + balance };
+  });
+}
+
+function getBankOptions(bankAccounts) {
+  return (bankAccounts || []).map(function(bank) {
+    var id = bank.id || bank.bankAccountId;
+    var label = (bank.bankName || 'Bank') + ' • ' + (bank.accountNumber || '').slice(-4);
+    return { v: String(id), l: label };
+  });
+}
+
+function buildDepositForm(container, ctx) {
+  var accountOptions = getAccountOptions(ctx.accounts);
+  var provider = ctx.paymentProvider || {};
+  var methodOptions = [{ v: 'BankTransfer', l: 'Bank Transfer' }, { v: 'PromptPay', l: 'PromptPay QR' }];
+  var intro = document.createElement('div'); intro.className = 'notice-banner';
+  intro.textContent = 'Choose the destination trading account and payment method. PromptPay uses the member payment flow and should return QR/payment instructions when supported.';
+  var g1 = mkInput('Amount (USD)', 'deposit-amount', 'number', '0.00');
+  var g2 = mkSelect('Trading Account', 'deposit-account', accountOptions);
+  var g3 = mkSelect('Payment Method', 'deposit-method', methodOptions);
+  var err = document.createElement('div'); err.className = 'form-error'; err.id = 'deposit-error';
+  var btn = document.createElement('button'); btn.className = 'form-submit green'; btn.textContent = 'Submit Deposit';
+  btn.onclick = function() {
+    var amount = parseFloat(document.getElementById('deposit-amount').value);
+    var mt5AccountId = document.getElementById('deposit-account').value;
+    var paymentMethod = document.getElementById('deposit-method').value;
+    if (!amount || amount <= 0) { err.textContent = 'Enter a valid amount'; err.style.display = 'block'; return; }
+    if (!mt5AccountId) { err.textContent = 'Select a trading account'; err.style.display = 'block'; return; }
+    btn.disabled = true; btn.textContent = 'Submitting...'; err.style.display = 'none';
+    apiFetch('/deposit', {
+      method: 'POST',
+      body: {
+        amount: amount,
+        mt5AccountId: mt5AccountId,
+        paymentMethod: paymentMethod,
+        currency: 'USD',
+        provider: provider.provider || null
+      }
+    }).then(function(data) {
+      var payload = data.data || data;
+      var message = 'Deposit submitted successfully!';
+      if (payload.transactionId || payload.transactionRef) message += ' Ref: ' + (payload.transactionId || payload.transactionRef);
+      if (payload.qrCodeUrl) message += ' QR ready.';
+      showFormSuccess(container, message);
+    }).catch(function(e) {
+      err.textContent = e.message || 'Failed';
+      err.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Submit Deposit';
+    });
+  };
+  container.appendChild(intro);
+  container.appendChild(g1);
+  container.appendChild(g2);
+  container.appendChild(g3);
+  container.appendChild(err);
+  container.appendChild(btn);
+}
+
+function buildWithdrawForm(container, ctx) {
+  var accountOptions = getAccountOptions(ctx.accounts);
+  var bankOptions = getBankOptions(ctx.bankAccounts);
+  var intro = document.createElement('div'); intro.className = 'notice-banner';
+  intro.textContent = 'Withdrawals need both the source trading account and a verified bank account, matching the member portal flow.';
+  var g1 = mkInput('Amount (USD)', 'withdraw-amount', 'number', '0.00');
+  var g2 = mkSelect('Trading Account', 'withdraw-account', accountOptions);
+  var g3 = mkSelect('Bank Account', 'withdraw-bank', bankOptions);
+  var err = document.createElement('div'); err.className = 'form-error'; err.id = 'withdraw-error';
+  var btn = document.createElement('button'); btn.className = 'form-submit red'; btn.textContent = 'Submit Withdrawal';
+  btn.onclick = function() {
+    var amount = parseFloat(document.getElementById('withdraw-amount').value);
+    var mt5AccountId = document.getElementById('withdraw-account').value;
+    var bankAccountId = document.getElementById('withdraw-bank').value;
+    if (!amount || amount <= 0) { err.textContent = 'Enter a valid amount'; err.style.display = 'block'; return; }
+    if (!mt5AccountId) { err.textContent = 'Select a trading account'; err.style.display = 'block'; return; }
+    if (!bankAccountId) { err.textContent = 'Select a bank account'; err.style.display = 'block'; return; }
+    btn.disabled = true; btn.textContent = 'Submitting...'; err.style.display = 'none';
+    apiFetch('/withdraw', {
+      method: 'POST',
+      body: {
+        amount: amount,
+        mt5AccountId: mt5AccountId,
+        bankAccountId: bankAccountId,
+        currency: 'USD'
+      }
+    }).then(function(data) {
+      var payload = data.data || data;
+      var message = 'Withdrawal submitted successfully!';
+      if (payload.transactionId || payload.reference || payload.id) message += ' Ref: ' + (payload.transactionId || payload.reference || payload.id);
+      showFormSuccess(container, message);
+    }).catch(function(e) {
+      err.textContent = e.message || 'Failed';
+      err.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Submit Withdrawal';
+    });
+  };
+  container.appendChild(intro);
+  container.appendChild(g1);
+  container.appendChild(g2);
+  container.appendChild(g3);
+  container.appendChild(err);
+  container.appendChild(btn);
+}
+
+function buildTransferForm(container, ctx) {
+  var walletOptions = getWalletOptions(ctx.wallets);
+  var accountOptions = getAccountOptions(ctx.accounts);
+  var intro = document.createElement('div'); intro.className = 'notice-banner';
+  intro.textContent = 'Transfers use the member wallet-to-MT5 or MT5-to-wallet routes for immediate internal movement.';
   var g1 = mkInput('Amount (USD)', 'transfer-amount', 'number', '0.00');
-  var g2 = mkSelect('Transfer Type', 'transfer-type', [{v:'WalletToTrading',l:'Wallet \u2192 Trading'},{v:'TradingToWallet',l:'Trading \u2192 Wallet'}]);
+  var g2 = mkSelect('Transfer Type', 'transfer-type', [{v:'wallet-to-mt5',l:'Wallet → Trading'},{v:'mt5-to-wallet',l:'Trading → Wallet'}]);
+  var g3 = mkSelect('Wallet', 'transfer-wallet', walletOptions);
+  var g4 = mkSelect('Trading Account', 'transfer-account', accountOptions);
   var err = document.createElement('div'); err.className = 'form-error'; err.id = 'transfer-error';
   var btn = document.createElement('button'); btn.className = 'form-submit gold'; btn.textContent = 'Submit Transfer';
   btn.onclick = function() {
     var amount = parseFloat(document.getElementById('transfer-amount').value);
-    var type = document.getElementById('transfer-type').value;
+    var transferType = document.getElementById('transfer-type').value;
+    var walletId = document.getElementById('transfer-wallet').value;
+    var mt5AccountId = document.getElementById('transfer-account').value;
     if (!amount || amount <= 0) { err.textContent = 'Enter a valid amount'; err.style.display = 'block'; return; }
+    if (!walletId || !mt5AccountId) { err.textContent = 'Select both wallet and trading account'; err.style.display = 'block'; return; }
     btn.disabled = true; btn.textContent = 'Submitting...'; err.style.display = 'none';
-    apiFetch('/transfer', { method: 'POST', body: { amount: amount, transferType: type } })
-      .then(function() { showFormSuccess(container, 'Transfer completed!'); })
-      .catch(function(e) { err.textContent = e.message || 'Failed'; err.style.display = 'block'; btn.disabled = false; btn.textContent = 'Submit Transfer'; });
+    apiFetch('/transfer', {
+      method: 'POST',
+      body: {
+        amount: amount,
+        transferType: transferType,
+        walletId: walletId,
+        mt5AccountId: mt5AccountId
+      }
+    }).then(function(data) {
+      var payload = data.data || data;
+      var message = 'Transfer completed!';
+      if (payload.reference || payload.id || payload.transactionId) message += ' Ref: ' + (payload.reference || payload.id || payload.transactionId);
+      showFormSuccess(container, message);
+    }).catch(function(e) {
+      err.textContent = e.message || 'Failed';
+      err.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Submit Transfer';
+    });
   };
-  container.appendChild(g1); container.appendChild(g2); container.appendChild(err); container.appendChild(btn);
+  container.appendChild(intro);
+  container.appendChild(g1);
+  container.appendChild(g2);
+  container.appendChild(g3);
+  container.appendChild(g4);
+  container.appendChild(err);
+  container.appendChild(btn);
 }
 
 function showFormSuccess(container, msg) {

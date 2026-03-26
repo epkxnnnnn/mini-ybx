@@ -17,6 +17,7 @@ const ExecutionAuditService = require("./services/execution-audit-service");
 const { createRequestId, log } = require("./services/logger");
 const { generateSignal, generateSignalForSymbol, AI_SIGNAL_SYMBOLS } = require("./services/signal-service");
 const { calculatePortfolio } = require("./services/portfolio-service");
+const { normalizeTick } = require("./services/market-data-service");
 const { startMarginMonitor } = require("./jobs/margin-monitor");
 const { startPositionMonitor, normalizePosition } = require("./jobs/position-monitor");
 const setupTelegram = require("./bots/telegram");
@@ -394,8 +395,32 @@ app.get("/api/webapp/prices", async (req, res) => {
     return res.status(503).json({ error: "CRM not configured" });
   }
   try {
-    const data = await crmClient.getTickStats();
-    res.json(data);
+    const symbols = 'XAUUSD,XAGUSD,BTCUSD,ETHUSD,EURUSD,GBPUSD,USDJPY,GBPJPY,EURJPY,AUDUSD,NZDUSD,USDCHF,XTIUSD';
+    const [pricesResponse, statsResponse] = await Promise.all([
+      crmClient.getPrices(symbols),
+      crmClient.getTickStats(symbols),
+    ]);
+
+    const livePrices = pricesResponse?.data || pricesResponse || {};
+    const rawStats = statsResponse?.data || statsResponse;
+    const statsTicks = Array.isArray(rawStats) ? rawStats : (rawStats?.ticks || []);
+    const statsBySymbol = new Map(
+      statsTicks.map((tick) => [String(tick.symbol || tick.name || '').toUpperCase(), tick])
+    );
+
+    const normalized = Object.entries(livePrices).map(([symbol, liveTick]) => {
+      const statTick = statsBySymbol.get(String(symbol).toUpperCase()) || {};
+      return normalizeTick({
+        ...statTick,
+        ...liveTick,
+        symbol,
+        timestamp: liveTick?.timestamp || liveTick?.time || pricesResponse?.timestamp || pricesResponse?.fetchedAt || null,
+      }, symbol);
+    }).filter(Boolean);
+    res.json({
+      data: normalized,
+      fetchedAt: new Date().toISOString(),
+    });
   } catch (err) {
     console.error("WebApp prices error:", err.message);
     res.status(500).json({ error: "Failed to fetch prices" });
@@ -551,6 +576,42 @@ app.get("/api/webapp/transactions", async (req, res) => {
   }
 });
 
+app.get("/api/webapp/wallets", async (req, res) => {
+  const session = await getMemberSession(req);
+  if (!session) return res.status(401).json({ error: "Please login first" });
+  try {
+    const data = await crmClient.getMemberWallets(session.accessToken);
+    res.json(data);
+  } catch (err) {
+    console.error("WebApp wallets error:", err.message);
+    res.status(500).json({ error: "Failed to fetch wallets" });
+  }
+});
+
+app.get("/api/webapp/bank-accounts", async (req, res) => {
+  const session = await getMemberSession(req);
+  if (!session) return res.status(401).json({ error: "Please login first" });
+  try {
+    const data = await crmClient.getMemberBankAccounts(session.accessToken);
+    res.json(data);
+  } catch (err) {
+    console.error("WebApp bank accounts error:", err.message);
+    res.status(500).json({ error: "Failed to fetch bank accounts" });
+  }
+});
+
+app.get("/api/webapp/payment-provider", async (req, res) => {
+  const session = await getMemberSession(req);
+  if (!session) return res.status(401).json({ error: "Please login first" });
+  try {
+    const data = await crmClient.getActivePaymentProvider(session.accessToken);
+    res.json(data);
+  } catch (err) {
+    console.error("WebApp payment provider error:", err.message);
+    res.status(500).json({ error: "Failed to fetch payment provider" });
+  }
+});
+
 // Transaction summary
 app.get("/api/webapp/transactions/summary", async (req, res) => {
   const session = await getMemberSession(req);
@@ -568,11 +629,12 @@ app.get("/api/webapp/transactions/summary", async (req, res) => {
 app.post("/api/webapp/deposit", async (req, res) => {
   const session = await getMemberSession(req);
   if (!session) return res.status(401).json({ error: "Please login first" });
-  const { amount, paymentMethod } = req.body;
+  const payload = req.body || {};
+  const amount = Number(payload.amount);
   if (!amount || amount <= 0) return res.status(400).json({ error: "Invalid amount" });
-  if (!paymentMethod) return res.status(400).json({ error: "Payment method required" });
+  if (!payload.paymentMethod) return res.status(400).json({ error: "Payment method required" });
   try {
-    const data = await crmClient.memberDeposit(session.accessToken, amount, paymentMethod);
+    const data = await crmClient.memberDeposit(session.accessToken, { ...payload, amount });
     res.json(data);
   } catch (err) {
     console.error("WebApp deposit error:", err.message);
@@ -584,11 +646,15 @@ app.post("/api/webapp/deposit", async (req, res) => {
 app.post("/api/webapp/withdraw", async (req, res) => {
   const session = await getMemberSession(req);
   if (!session) return res.status(401).json({ error: "Please login first" });
-  const { amount, paymentMethod } = req.body;
+  const payload = req.body || {};
+  const amount = Number(payload.amount);
   if (!amount || amount <= 0) return res.status(400).json({ error: "Invalid amount" });
-  if (!paymentMethod) return res.status(400).json({ error: "Payment method required" });
+  if (!payload.mt5AccountId) return res.status(400).json({ error: "Trading account required" });
+  if (!payload.bankAccountId) return res.status(400).json({ error: "Bank account required" });
   try {
-    const data = await crmClient.memberWithdraw(session.accessToken, amount, paymentMethod);
+    const providerConfig = await crmClient.getActivePaymentProvider(session.accessToken).catch(() => null);
+    const provider = providerConfig?.data?.provider || providerConfig?.provider || 'Overpay';
+    const data = await crmClient.memberWithdraw(session.accessToken, { ...payload, amount }, provider);
     res.json(data);
   } catch (err) {
     console.error("WebApp withdraw error:", err.message);
@@ -600,11 +666,35 @@ app.post("/api/webapp/withdraw", async (req, res) => {
 app.post("/api/webapp/transfer", async (req, res) => {
   const session = await getMemberSession(req);
   if (!session) return res.status(401).json({ error: "Please login first" });
-  const { amount, transferType, sourceWalletId } = req.body;
+  const payload = req.body || {};
+  const amount = Number(payload.amount);
   if (!amount || amount <= 0) return res.status(400).json({ error: "Invalid amount" });
-  if (!transferType) return res.status(400).json({ error: "Transfer type required" });
+  if (!payload.transferType) return res.status(400).json({ error: "Transfer type required" });
   try {
-    const data = await crmClient.memberTransfer(session.accessToken, amount, transferType, sourceWalletId);
+    let data;
+    if (payload.transferType === 'wallet-to-mt5') {
+      if (!payload.walletId || !payload.mt5AccountId) {
+        return res.status(400).json({ error: "Wallet and trading account are required" });
+      }
+      data = await crmClient.memberTransferWalletToMt5(session.accessToken, {
+        walletId: payload.walletId,
+        mt5AccountId: payload.mt5AccountId,
+        amount,
+        notes: payload.notes || '',
+      });
+    } else if (payload.transferType === 'mt5-to-wallet') {
+      if (!payload.walletId || !payload.mt5AccountId) {
+        return res.status(400).json({ error: "Wallet and trading account are required" });
+      }
+      data = await crmClient.memberTransferMt5ToWallet(session.accessToken, {
+        walletId: payload.walletId,
+        mt5AccountId: payload.mt5AccountId,
+        amount,
+        notes: payload.notes || '',
+      });
+    } else {
+      return res.status(400).json({ error: "Unsupported transfer type" });
+    }
     res.json(data);
   } catch (err) {
     console.error("WebApp transfer error:", err.message);

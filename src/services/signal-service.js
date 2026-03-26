@@ -3,6 +3,8 @@
  * Extracted from server.js for use across AI engine, bots, and API
  */
 
+const { normalizeTick } = require('./market-data-service');
+
 const AI_SIGNAL_SYMBOLS = ['XAUUSD', 'XAGUSD', 'EURUSD', 'GBPUSD', 'USDJPY', 'BTCUSD'];
 
 function toNumber(value) {
@@ -30,7 +32,7 @@ function symbolDecimals(symbol) {
 /**
  * Generate trading signal from CRM analysis data
  */
-function generateSignal(symbol, structure, htfBias, keyLevels, sweeps) {
+function generateSignal(symbol, structure, htfBias, keyLevels, sweeps, livePrice = null) {
   const struct = structure?.data || structure;
   const biases = htfBias?.data || htfBias;
   const levels = keyLevels?.data || keyLevels;
@@ -53,8 +55,10 @@ function generateSignal(symbol, structure, htfBias, keyLevels, sweeps) {
 
   // Key levels for entry/SL/TP
   const levelArr = Array.isArray(levels) ? levels : (levels?.levels || []);
-  const currentPrice = toNumber(struct.price || struct.currentPrice || struct.entryPrice);
+  const tick = livePrice ? normalizeTick(livePrice.raw || livePrice, symbol) : null;
+  const currentPrice = toNumber((tick && tick.priceStatus === 'live' && tick.bid) || struct.price || struct.currentPrice || struct.entryPrice);
   if (!currentPrice || currentPrice <= 0) return null;
+  if (livePrice && (!tick || tick.priceStatus !== 'live')) return null;
 
   const normalizedLevels = levelArr
     .map((level) => ({
@@ -98,6 +102,8 @@ function generateSignal(symbol, structure, htfBias, keyLevels, sweeps) {
     riskReward: `1:${rr}`,
     analysis: struct.summary || struct.description || `${struct.trend || struct.direction || 'N/A'} structure detected`,
     timeframe: struct.timeframe || 'H4',
+    priceStatus: tick ? tick.priceStatus : null,
+    sourceTimestamp: tick ? tick.sourceTimestamp : null,
   };
 }
 
@@ -105,13 +111,19 @@ function generateSignal(symbol, structure, htfBias, keyLevels, sweeps) {
  * Generate signal for a symbol by fetching all data from CRM
  */
 async function generateSignalForSymbol(crmClient, symbol) {
-  const [structure, htfBias, keyLevels, sweeps] = await Promise.all([
+  const [structure, htfBias, keyLevels, sweeps, livePrices] = await Promise.all([
     crmClient.getMarketStructure(symbol).catch(() => null),
     crmClient.getHtfBias(symbol).catch(() => null),
     crmClient.getKeyLevels(symbol).catch(() => null),
     crmClient.getLiquiditySweeps(symbol).catch(() => null),
+    crmClient.getPrices(symbol).catch(() => null),
   ]);
-  return generateSignal(symbol, structure, htfBias, keyLevels, sweeps);
+  const liveData = livePrices?.data || livePrices || {};
+  const liveTick = liveData[String(symbol || '').toUpperCase()] || liveData[String(symbol || '')] || null;
+  const normalizedLiveTick = liveTick
+    ? { ...liveTick, timestamp: liveTick.timestamp || liveTick.time || livePrices?.timestamp || livePrices?.fetchedAt || null }
+    : null;
+  return generateSignal(symbol, structure, htfBias, keyLevels, sweeps, normalizedLiveTick);
 }
 
 module.exports = {

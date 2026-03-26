@@ -290,10 +290,31 @@ class CRMClient {
   }
 
   /**
+   * Get member wallets
+   */
+  async getMemberWallets(memberToken) {
+    return this._memberGet(memberToken, '/api/v1/transactions/wallets');
+  }
+
+  /**
+   * Get member bank accounts
+   */
+  async getMemberBankAccounts(memberToken) {
+    return this._memberGet(memberToken, '/api/v1/users/bank-accounts');
+  }
+
+  /**
    * Get member's transaction summary
    */
   async getMemberTransactionSummary(memberToken) {
     return this._memberGet(memberToken, '/api/v1/transactions/summary');
+  }
+
+  /**
+   * Get active payment provider configuration
+   */
+  async getActivePaymentProvider(memberToken) {
+    return this._memberGet(memberToken, '/api/v1/payment/active-provider');
   }
 
   /**
@@ -411,22 +432,36 @@ class CRMClient {
   /**
    * Create a deposit request (member's token)
    */
-  async memberDeposit(memberToken, amount, paymentMethod) {
-    return this._memberPost(memberToken, '/api/v1/transactions/deposit', { amount, paymentMethod });
+  async memberDeposit(memberToken, payload) {
+    const paymentMethod = String(payload?.paymentMethod || '').toLowerCase();
+    if (paymentMethod === 'promptpay') {
+      return this._memberPost(memberToken, '/api/v1/payment/stripe/promptpay/deposit', payload);
+    }
+    return this._memberPost(memberToken, '/api/v1/payment/overpay/deposit', payload);
   }
 
   /**
    * Create a withdrawal request (member's token)
    */
-  async memberWithdraw(memberToken, amount, paymentMethod) {
-    return this._memberPost(memberToken, '/api/v1/transactions/withdraw', { amount, paymentMethod });
+  async memberWithdraw(memberToken, payload, provider) {
+    const lowerProvider = String(provider || '').toLowerCase();
+    const path = lowerProvider === 'plusone-lao'
+      ? '/api/v1/payment/plusone-lao/withdraw'
+      : lowerProvider === 'plusone'
+        ? '/api/v1/payment/plusone/withdraw'
+        : '/api/v1/payment/overpay/withdraw';
+    return this._memberPost(memberToken, path, payload);
   }
 
   /**
    * Create an internal transfer (member's token)
    */
-  async memberTransfer(memberToken, amount, transferType, sourceWalletId) {
-    return this._memberPost(memberToken, '/api/v1/transactions/transfer', { amount, transferType, sourceWalletId });
+  async memberTransferWalletToMt5(memberToken, payload) {
+    return this._memberPost(memberToken, '/api/v1/transactions/transfer/wallet-to-mt5', payload);
+  }
+
+  async memberTransferMt5ToWallet(memberToken, payload) {
+    return this._memberPost(memberToken, '/api/v1/transactions/transfer/mt5-to-wallet', payload);
   }
 
   // ========== Prices ==========
