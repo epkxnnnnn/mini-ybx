@@ -756,7 +756,7 @@ app.get("/api/webapp/journal", async (req, res) => {
   if (!crmClient) return res.status(503).json({ error: "CRM not configured" });
 
   try {
-    const data = await crmClient.getMemberJournal(session.accessToken, req.query.page, req.query.pageSize);
+    const data = await crmClient.getMemberJournal(session.accessToken, req.query);
     res.json(data);
   } catch (err) {
     console.error("Journal fetch error:", err.message);
@@ -764,30 +764,29 @@ app.get("/api/webapp/journal", async (req, res) => {
   }
 });
 
-app.post("/api/webapp/journal", async (req, res) => {
+app.get("/api/webapp/journal/stats", async (req, res) => {
   const session = await getMemberSession(req);
   if (!session) return res.status(401).json({ error: "Please login first" });
   if (!crmClient) return res.status(503).json({ error: "CRM not configured" });
 
   try {
-    const data = await crmClient.createJournalEntry(session.accessToken, req.body);
+    const data = await crmClient.getMemberJournalStats(session.accessToken, req.query);
     res.json(data);
   } catch (err) {
-    console.error("Journal create error:", err.message);
+    console.error("Journal stats error:", err.message);
     res.status(err.status || 500).json({ error: err.message });
   }
 });
 
-// Delete journal entry
-app.delete("/api/webapp/journal/:id", async (req, res) => {
+app.put("/api/webapp/journal/:id/notes", async (req, res) => {
   const session = await getMemberSession(req);
   if (!session) return res.status(401).json({ error: "Please login first" });
   if (!crmClient) return res.status(503).json({ error: "CRM not configured" });
   try {
-    const data = await crmClient.deleteJournalEntry(session.accessToken, req.params.id);
+    const data = await crmClient.updateJournalNotes(session.accessToken, req.params.id, req.body || {});
     res.json(data);
   } catch (err) {
-    console.error("Journal delete error:", err.message);
+    console.error("Journal update error:", err.message);
     res.status(err.status || 500).json({ error: err.message });
   }
 });

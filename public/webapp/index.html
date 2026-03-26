@@ -2648,7 +2648,7 @@
   </div>
 
   <!-- Journal FAB -->
-  <button class="journal-fab" id="journalFab" style="display:none;" onclick="showJournalForm()">+</button>
+  <button class="journal-fab" id="journalFab" style="display:none;" onclick="showToast('Journal now syncs from real trade history. Review entries below.')">+</button>
 
   <!-- Support FAB + Menu -->
   <button class="support-fab" id="supportFab" onclick="toggleSupportMenu()">&#x1F4AC;</button>
@@ -2725,6 +2725,8 @@ var journalLoaded = false;
 var signalRefreshTimer = null;
 var priceRefreshTimer = null;
 var fundingContext = null;
+var journalStatsData = null;
+var JOURNAL_SETUP_TAGS = ['BOS', 'CHoCH', 'Sweep', 'OrderBlock', 'FVG', 'KeyLevel', 'News', 'Breakout', 'Reversal', 'Scalp'];
 
 var SVG_NS = 'http://www.w3.org/2000/svg';
 var TAB_META = {
@@ -2837,7 +2839,7 @@ function showApp() {
   document.getElementById('tabBar').classList.add('visible');
   document.getElementById('supportFab').classList.add('visible');
   document.getElementById('chatFab').classList.add('visible');
-  document.getElementById('journalFab').style.display = currentTab === 'journal' ? 'block' : 'none';
+  document.getElementById('journalFab').style.display = 'none';
   updateHeaderState();
   if (currentTab === 'home' && !homeLoaded) loadHome();
   if (currentTab === 'market' && !pricesData) loadPrices();
@@ -2955,7 +2957,7 @@ function switchTab(tab) {
   document.querySelectorAll('.tab-panel').forEach(function(p) { p.classList.toggle('active', p.id === 'panel-' + tab); });
   updateHeaderState();
 
-  document.getElementById('journalFab').style.display = tab === 'journal' ? 'block' : 'none';
+  document.getElementById('journalFab').style.display = 'none';
 
   if (tab === 'home' && !homeLoaded) loadHome();
   if (tab === 'market') switchMarketSub(currentMarketSub);
@@ -3611,24 +3613,30 @@ function loadJournal() {
   var loading = document.getElementById('journal-loading');
   content.textContent = ''; loading.style.display = 'flex';
 
-  apiFetch('/journal').then(function(result) {
+  Promise.all([
+    apiFetch('/journal?page=1&pageSize=50'),
+    apiFetch('/journal/stats').catch(function() { return { data: null }; })
+  ]).then(function(results) {
     loading.style.display = 'none';
     journalLoaded = true;
-    var entries = result.data ? (Array.isArray(result.data) ? result.data : (result.data.data || [])) : [];
+    var result = results[0];
+    var statsResult = results[1];
+    var data = result.data != null ? result.data : result;
+    var entries = Array.isArray(data) ? data : (data.data || []);
+    journalStatsData = statsResult && statsResult.data ? statsResult.data : null;
     journalData = entries;
     if (!entries.length) {
       var nd = document.createElement('div'); nd.className = 'no-data'; nd.style.paddingTop = '48px';
       var emoji = document.createElement('div'); emoji.style.cssText = 'font-size:40px;margin-bottom:12px;'; emoji.textContent = '\uD83D\uDCDD';
       nd.appendChild(emoji);
-      nd.appendChild(document.createTextNode('\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E01\u0E32\u0E23\u0E40\u0E17\u0E23\u0E14'));
+      nd.appendChild(document.createTextNode('\u0E22\u0E31\u0E07\u0E44\u0E21\u0E48\u0E21\u0E35 trade history \u0E17\u0E35\u0E48 sync \u0E21\u0E32\u0E08\u0E32\u0E01 MT5'));
       nd.appendChild(document.createElement('br'));
-      var hint = document.createElement('span'); hint.style.fontSize = '12px'; hint.textContent = '\u0E01\u0E14\u0E1B\u0E38\u0E48\u0E21 + \u0E40\u0E1E\u0E37\u0E48\u0E2D\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E41\u0E23\u0E01';
+      var hint = document.createElement('span'); hint.style.fontSize = '12px'; hint.textContent = '\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E21\u0E35\u0E14\u0E35\u0E25 closing trade \u0E41\u0E25\u0E49\u0E27 \u0E08\u0E30\u0E02\u0E36\u0E49\u0E19\u0E21\u0E32\u0E17\u0E35\u0E48\u0E19\u0E35\u0E48\u0E2D\u0E31\u0E15\u0E42\u0E19\u0E21\u0E31\u0E15\u0E34';
       nd.appendChild(hint);
       content.appendChild(nd);
       return;
     }
-    // Performance dashboard
-    content.appendChild(renderJournalDashboard(entries));
+    content.appendChild(renderJournalDashboard(entries, journalStatsData));
     // Symbol filters
     var filters = renderJournalFilters(entries);
     if (filters) content.appendChild(filters);
@@ -3648,22 +3656,23 @@ function renderJournalEntry(entry) {
 
   var header = document.createElement('div'); header.className = 'journal-header';
   var sym = document.createElement('span'); sym.className = 'journal-symbol';
-  var dir = entry.direction || entry.type || '';
+  var dir = entry.side || entry.direction || entry.type || '';
   sym.textContent = (entry.symbol || 'N/A') + ' ' + dir;
-  var pnl = parseFloat(entry.pnl || entry.profit || entry.result || 0);
+  var pnl = parseFloat(entry.realizedPnl || entry.pnl || entry.profit || entry.result || 0);
   var result = document.createElement('span');
-  result.className = 'journal-result ' + (pnl >= 0 ? 'profit' : 'loss');
-  result.textContent = (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2);
+  var isClosed = !!(entry.closedAt || entry.exitPrice || entry.realizedPnl != null);
+  result.className = 'journal-result ' + (isClosed ? (pnl >= 0 ? 'profit' : 'loss') : 'loss');
+  result.textContent = isClosed ? ((pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2)) : 'Open';
   header.appendChild(sym); header.appendChild(result);
   card.appendChild(header);
 
   var date = document.createElement('div'); date.className = 'journal-date';
-  date.textContent = entry.createdAt ? new Date(entry.createdAt).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' }) : '';
+  date.textContent = entry.openedAt ? new Date(entry.openedAt).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' }) : '';
   card.appendChild(date);
 
-  if (entry.notes || entry.description) {
+  if (entry.setupTag || entry.notes) {
     var notes = document.createElement('div'); notes.className = 'journal-notes';
-    var noteText = entry.notes || entry.description || '';
+    var noteText = (entry.setupTag ? ('Tag: ' + entry.setupTag + ' • ') : '') + (entry.notes || '');
     notes.textContent = noteText.length > 80 ? noteText.substring(0, 80) + '...' : noteText;
     card.appendChild(notes);
   }
@@ -3672,105 +3681,63 @@ function renderJournalEntry(entry) {
   var detail = document.createElement('div'); detail.className = 'journal-detail';
   [
     ['Entry Price', entry.entryPrice || entry.openPrice || '-'],
-    ['Exit Price', entry.exitPrice || entry.closePrice || '-'],
-    ['Lot Size', entry.lotSize || entry.volume || '-'],
-    ['P/L', '$' + pnl.toFixed(2)],
+    ['Exit Price', entry.exitPrice || entry.closedAt ? (entry.exitPrice || '-') : 'Open'],
+    ['Lot Size', entry.volume || entry.lotSize || '-'],
+    ['R:R', entry.realizedRr != null ? ((entry.realizedRr >= 0 ? '+' : '') + Number(entry.realizedRr).toFixed(1) + 'R') : (entry.riskRewardRatio != null ? Number(entry.riskRewardRatio).toFixed(1) : '-')],
+    ['P/L', isClosed ? ('$' + pnl.toFixed(2)) : 'Open'],
   ].forEach(function(r) {
     var row = document.createElement('div'); row.className = 'account-row';
     var l = document.createElement('span'); l.className = 'label'; l.textContent = r[0];
     var v = document.createElement('span'); v.className = 'value'; v.textContent = r[1];
     row.appendChild(l); row.appendChild(v); detail.appendChild(row);
   });
-  if (entry.notes || entry.description) {
-    var fullNotes = document.createElement('div');
-    fullNotes.style.cssText = 'margin-top:8px;font-size:12px;color:var(--ybx-text-dim);line-height:1.5;';
-    fullNotes.textContent = entry.notes || entry.description;
-    detail.appendChild(fullNotes);
-  }
-  // Delete button
-  var entryId = entry.id || entry._id;
-  if (entryId) {
-    var delBtn = document.createElement('button'); delBtn.className = 'journal-delete-btn';
-    delBtn.textContent = '\u0E25\u0E1A\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01';
-    delBtn.onclick = function(e) { e.stopPropagation(); deleteJournalEntry(entryId, card); };
-    detail.appendChild(delBtn);
-  }
+  var tagWrap = mkSelect('Setup Tag', 'journal-tag-' + entry.id, [{ v: '', l: 'Select tag' }].concat(JOURNAL_SETUP_TAGS.map(function(tag) { return { v: tag, l: tag }; })));
+  tagWrap.querySelector('select').value = entry.setupTag || '';
+  var ratingWrap = document.createElement('div'); ratingWrap.className = 'form-group';
+  var ratingLabel = document.createElement('label'); ratingLabel.textContent = 'Rating';
+  var ratingSelect = document.createElement('select'); ratingSelect.id = 'journal-rating-' + entry.id;
+  [{v:'',l:'Select rating'},{v:'1',l:'1 / 5'},{v:'2',l:'2 / 5'},{v:'3',l:'3 / 5'},{v:'4',l:'4 / 5'},{v:'5',l:'5 / 5'}].forEach(function(o) {
+    var opt = document.createElement('option'); opt.value = o.v; opt.textContent = o.l; ratingSelect.appendChild(opt);
+  });
+  ratingSelect.value = entry.rating != null ? String(entry.rating) : '';
+  ratingWrap.appendChild(ratingLabel); ratingWrap.appendChild(ratingSelect);
+  var notesWrap = document.createElement('div'); notesWrap.className = 'form-group';
+  var notesLabel = document.createElement('label'); notesLabel.textContent = 'Review Notes';
+  var notesInput = document.createElement('textarea'); notesInput.id = 'journal-notes-' + entry.id; notesInput.rows = 3; notesInput.placeholder = 'What did you learn from this trade?'; notesInput.value = entry.notes || '';
+  notesWrap.appendChild(notesLabel); notesWrap.appendChild(notesInput);
+  var saveBtn = document.createElement('button'); saveBtn.className = 'form-submit gold'; saveBtn.textContent = 'Save Review';
+  saveBtn.onclick = function(e) {
+    e.stopPropagation();
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving...';
+    apiFetch('/journal/' + entry.id + '/notes', {
+      method: 'PUT',
+      body: {
+        setupTag: tagWrap.querySelector('select').value || null,
+        notes: notesInput.value.trim() || null,
+        rating: ratingSelect.value ? Number(ratingSelect.value) : null
+      }
+    }).then(function(data) {
+      var updated = data.data || data;
+      entry.setupTag = updated.setupTag || null;
+      entry.notes = updated.notes || '';
+      entry.rating = updated.rating || null;
+      showToast('Journal review saved');
+      journalLoaded = false;
+      loadJournal();
+    }).catch(function(err) {
+      showToast(err.message || 'Failed to save review');
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save Review';
+    });
+  };
+  detail.appendChild(tagWrap);
+  detail.appendChild(ratingWrap);
+  detail.appendChild(notesWrap);
+  detail.appendChild(saveBtn);
   card.appendChild(detail);
 
   return card;
-}
-
-function showJournalForm(prefill) {
-  var overlay = document.getElementById('action-form-overlay');
-  var title = document.getElementById('action-form-title');
-  var body = document.getElementById('action-form-body');
-  body.textContent = ''; overlay.style.display = 'flex';
-  title.textContent = '\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E01\u0E32\u0E23\u0E40\u0E17\u0E23\u0E14';
-
-  var g1 = mkSelect('Symbol', 'j-symbol', [
-    {v:'XAUUSD',l:'XAUUSD'},{v:'XAGUSD',l:'XAGUSD'},
-    {v:'EURUSD',l:'EURUSD'},{v:'GBPUSD',l:'GBPUSD'},
-    {v:'USDJPY',l:'USDJPY'},{v:'BTCUSD',l:'BTCUSD'},
-    {v:'ETHUSD',l:'ETHUSD'},{v:'GBPJPY',l:'GBPJPY'},
-  ]);
-  var g2 = mkSelect('Direction', 'j-direction', [{v:'BUY',l:'BUY'},{v:'SELL',l:'SELL'}]);
-  var g3 = mkInput('Entry Price', 'j-entry', 'number', '0.00');
-  var g4 = mkInput('Exit Price', 'j-exit', 'number', '0.00');
-  var g5 = mkInput('Lot Size', 'j-lot', 'number', '0.01');
-  var g6 = mkInput('P/L ($)', 'j-pnl', 'number', '0.00');
-  var pnlPreview = document.createElement('div'); pnlPreview.className = 'journal-pnl-preview'; pnlPreview.id = 'j-pnl-preview';
-
-  var g7 = document.createElement('div'); g7.className = 'form-group';
-  var l7 = document.createElement('label'); l7.textContent = 'Notes';
-  var ta = document.createElement('textarea'); ta.id = 'j-notes'; ta.rows = 3; ta.placeholder = '\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E40\u0E1E\u0E34\u0E48\u0E21\u0E40\u0E15\u0E34\u0E21...';
-  g7.appendChild(l7); g7.appendChild(ta);
-
-  var err = document.createElement('div'); err.className = 'form-error'; err.id = 'j-error';
-  var btn = document.createElement('button'); btn.className = 'form-submit gold'; btn.textContent = '\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01';
-  btn.onclick = function() {
-    var symbol = document.getElementById('j-symbol').value;
-    var direction = document.getElementById('j-direction').value;
-    var entryPrice = document.getElementById('j-entry').value;
-    var exitPrice = document.getElementById('j-exit').value;
-    var lotSize = document.getElementById('j-lot').value;
-    var pnl = document.getElementById('j-pnl').value;
-    var notes = document.getElementById('j-notes').value.trim();
-    if (!symbol) { err.textContent = '\u0E01\u0E23\u0E38\u0E13\u0E32\u0E40\u0E25\u0E37\u0E2D\u0E01 Symbol'; err.style.display = 'block'; return; }
-    btn.disabled = true; btn.textContent = '\u0E01\u0E33\u0E25\u0E31\u0E07\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01...'; err.style.display = 'none';
-    apiFetch('/journal', { method: 'POST', body: {
-      symbol: symbol, direction: direction,
-      entryPrice: parseFloat(entryPrice) || 0,
-      exitPrice: parseFloat(exitPrice) || 0,
-      lotSize: parseFloat(lotSize) || 0,
-      pnl: parseFloat(pnl) || 0,
-      notes: notes,
-    }}).then(function() {
-      showFormSuccess(body, '\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08!');
-      journalLoaded = false;
-      setTimeout(function() { loadJournal(); }, 1500);
-    }).catch(function(e) {
-      err.textContent = e.message || 'Failed'; err.style.display = 'block';
-      btn.disabled = false; btn.textContent = '\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01';
-    });
-  };
-
-  [g1, g2, g3, g4, g5, g6, pnlPreview, g7, err, btn].forEach(function(el) { body.appendChild(el); });
-
-  // Auto-calc P/L + prefill
-  setTimeout(function() {
-    ['j-symbol', 'j-direction', 'j-entry', 'j-exit', 'j-lot'].forEach(function(id) {
-      var el = document.getElementById(id);
-      if (el) { el.addEventListener('input', autoCalcPnl); el.addEventListener('change', autoCalcPnl); }
-    });
-    if (prefill) {
-      if (prefill.symbol) document.getElementById('j-symbol').value = prefill.symbol;
-      if (prefill.direction) document.getElementById('j-direction').value = prefill.direction;
-      if (prefill.entry) document.getElementById('j-entry').value = prefill.entry;
-      if (prefill.notes) document.getElementById('j-notes').value = prefill.notes;
-    }
-  }, 50);
-
-  if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
 }
 
 // ===== Deposit / Withdraw Tab =====
@@ -4345,12 +4312,7 @@ function fallbackCopy(text) {
 function saveSignalToJournal(sig) {
   switchTab('journal');
   setTimeout(function() {
-    showJournalForm({
-      symbol: sig.symbol,
-      direction: sig.direction,
-      entry: sig.entry,
-      notes: sig.direction + ' ' + sig.symbol + ' | Entry: ' + sig.entry + ' | SL: ' + sig.sl + ' | TP: ' + sig.tp + ' | R:R ' + sig.riskReward
-    });
+    showToast('Review the related trade in Journal after it closes and syncs from MT5.');
   }, 300);
 }
 
@@ -4536,13 +4498,12 @@ function showChatSuggestions() {
 var journalData = [];
 var journalFilter = null;
 
-function renderJournalDashboard(entries) {
+function renderJournalDashboard(entries, stats) {
   var filtered = journalFilter ? entries.filter(function(e) { return e.symbol === journalFilter; }) : entries;
-  var total = filtered.length;
-  var wins = filtered.filter(function(e) { return parseFloat(e.pnl || e.profit || e.result || 0) > 0; }).length;
-  var winRate = total > 0 ? Math.round((wins / total) * 100) : 0;
-  var totalPnl = filtered.reduce(function(s, e) { return s + parseFloat(e.pnl || e.profit || e.result || 0); }, 0);
-  var bestTrade = filtered.reduce(function(best, e) { var p = parseFloat(e.pnl || e.profit || e.result || 0); return p > best ? p : best; }, 0);
+  var total = stats && stats.totalTrades != null ? Number(stats.totalTrades) : filtered.length;
+  var winRate = stats && stats.winRate != null ? Math.round(Number(stats.winRate)) : (total > 0 ? Math.round((filtered.filter(function(e) { return parseFloat(e.realizedPnl || e.pnl || 0) > 0; }).length / total) * 100) : 0);
+  var totalPnl = stats && stats.totalPnl != null ? Number(stats.totalPnl) : filtered.reduce(function(s, e) { return s + parseFloat(e.realizedPnl || e.pnl || 0); }, 0);
+  var bestTrade = stats && stats.bestTrade != null ? Number(stats.bestTrade) : filtered.reduce(function(best, e) { var p = parseFloat(e.realizedPnl || e.pnl || 0); return p > best ? p : best; }, 0);
 
   var dashboard = document.createElement('div'); dashboard.className = 'journal-dashboard'; dashboard.id = 'journalDashboard';
   [
@@ -4582,59 +4543,11 @@ function reRenderJournal() {
   var content = document.getElementById('journal-content');
   content.textContent = '';
   if (!journalData.length) return;
-  content.appendChild(renderJournalDashboard(journalData));
+  content.appendChild(renderJournalDashboard(journalData, journalStatsData));
   var filters = renderJournalFilters(journalData);
   if (filters) content.appendChild(filters);
   var filtered = journalFilter ? journalData.filter(function(e) { return e.symbol === journalFilter; }) : journalData;
   filtered.forEach(function(entry) { content.appendChild(renderJournalEntry(entry)); });
-}
-
-function deleteJournalEntry(id, cardEl) {
-  if (!confirm('\u0E15\u0E49\u0E2D\u0E07\u0E01\u0E32\u0E23\u0E25\u0E1A\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E19\u0E35\u0E49?')) return;
-  cardEl.style.transition = 'all 0.3s ease';
-  cardEl.style.transform = 'translateX(100%)';
-  cardEl.style.opacity = '0';
-  apiFetch('/journal/' + id, { method: 'DELETE' }).then(function() {
-    setTimeout(function() {
-      cardEl.remove();
-      journalData = journalData.filter(function(e) { return (e.id || e._id) !== id; });
-      var dashboard = document.getElementById('journalDashboard');
-      if (dashboard) {
-        var newDash = renderJournalDashboard(journalData);
-        dashboard.parentNode.replaceChild(newDash, dashboard);
-      }
-      showToast('\u0E25\u0E1A\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08!');
-    }, 300);
-  }).catch(function(err) {
-    cardEl.style.transform = ''; cardEl.style.opacity = '';
-    showToast('\u0E25\u0E1A\u0E44\u0E21\u0E48\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08: ' + (err.message || 'Error'));
-  });
-  if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
-}
-
-var PNL_MULTIPLIERS = {
-  'XAUUSD': 100, 'XAGUSD': 5000,
-  'BTCUSD': 1, 'ETHUSD': 1,
-  'USDJPY': 1000, 'GBPJPY': 1000, 'EURJPY': 1000,
-  'default': 100000
-};
-
-function autoCalcPnl() {
-  var symbol = document.getElementById('j-symbol').value;
-  var direction = document.getElementById('j-direction').value;
-  var entry = parseFloat(document.getElementById('j-entry').value) || 0;
-  var exit = parseFloat(document.getElementById('j-exit').value) || 0;
-  var lot = parseFloat(document.getElementById('j-lot').value) || 0;
-  var pnlField = document.getElementById('j-pnl');
-  var preview = document.getElementById('j-pnl-preview');
-  if (!entry || !exit || !lot) { if (preview) preview.textContent = ''; return; }
-  var multiplier = PNL_MULTIPLIERS[symbol] || PNL_MULTIPLIERS['default'];
-  var pnl = direction === 'BUY' ? (exit - entry) * lot * multiplier : (entry - exit) * lot * multiplier;
-  pnlField.value = pnl.toFixed(2);
-  if (preview) {
-    preview.textContent = 'P/L: ' + (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2);
-    preview.style.color = pnl >= 0 ? 'var(--ybx-green)' : 'var(--ybx-red)';
-  }
 }
 
 // ===== Init: Check session on load =====

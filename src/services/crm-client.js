@@ -545,31 +545,16 @@ class CRMClient {
 
   // ========== Journal ==========
 
-  async getMemberJournal(memberToken, page = 1, pageSize = 20) {
-    return this._memberGet(memberToken, '/api/v1/journal', { page, pageSize });
+  async getMemberJournal(memberToken, params = {}) {
+    return this._memberGet(memberToken, '/api/v1/journal', params);
   }
 
-  async createJournalEntry(memberToken, entry) {
-    return this._memberPost(memberToken, '/api/v1/journal', entry);
+  async getMemberJournalStats(memberToken, params = {}) {
+    return this._memberGet(memberToken, '/api/v1/journal/stats', params);
   }
 
-  async deleteJournalEntry(memberToken, entryId) {
-    const path = `/api/v1/journal/${entryId}`;
-    const { res } = await this._fetchJson(`${this.baseUrl}${path}`, {
-      method: 'DELETE',
-      headers: {
-        'Authorization': `Bearer ${memberToken}`,
-        'Accept': 'application/json',
-      },
-    }, { method: 'DELETE', path, auth: 'member' });
-    if (!res.ok) {
-      const json = await res.json().catch(() => ({}));
-      const msg = json.message || `${res.status} ${res.statusText}`;
-      const err = new Error(msg);
-      err.status = res.status;
-      throw err;
-    }
-    return res.json().catch(() => ({ success: true }));
+  async updateJournalNotes(memberToken, entryId, payload) {
+    return this._memberPut(memberToken, `/api/v1/journal/${entryId}/notes`, payload);
   }
 }
 
