@@ -600,7 +600,7 @@ class YBXAIEngine {
       }
     }
 
-    if (symbol && wantsTradeSetup && (!priceContext || (priceResult && priceResult.status === "fulfilled" && priceResult.value && priceResult.value.priceStatus !== "live"))) {
+    if (symbol && wantsTradeSetup && !priceContext) {
       this.lastTradeSetups.delete(key);
       this._deletePersisted("ai:last-trade-setups", key);
       return this._buildLivePriceUnavailableMessage(symbol);
