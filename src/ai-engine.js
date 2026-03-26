@@ -554,6 +554,7 @@ class YBXAIEngine {
     let signalContext = "";
     let marketOverviewContext = "";
     let structuredSetup = null;
+    let priceResult = null;
     const symbol = this.detectSymbol(userMessage);
     const wantsTradeSetup = this.shouldCaptureTradeSetup(userMessage);
     const wantsOverview = this.wantsMarketOverview(userMessage);
@@ -564,6 +565,7 @@ class YBXAIEngine {
         this.fetchAnalysis(symbol),
       ]);
 
+      priceResult = price;
       if (price.status === "fulfilled" && price.value) {
         priceContext = this._buildPriceContext(price.value);
       }
@@ -597,7 +599,7 @@ class YBXAIEngine {
       }
     }
 
-    if (symbol && wantsTradeSetup && (!priceContext || (price.status === "fulfilled" && price.value && price.value.priceStatus !== "live"))) {
+    if (symbol && wantsTradeSetup && (!priceContext || (priceResult && priceResult.status === "fulfilled" && priceResult.value && priceResult.value.priceStatus !== "live"))) {
       this.lastTradeSetups.delete(key);
       this._deletePersisted("ai:last-trade-setups", key);
       return this._buildLivePriceUnavailableMessage(symbol);
